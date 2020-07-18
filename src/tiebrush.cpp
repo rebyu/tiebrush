@@ -513,9 +513,9 @@ public:
     ~PairedMates() = default;
 
     bool add_read(bam1_t* rec,uint32_t pos,uint32_t mate_pos){ // returns true if this is the first mate
-        this->fit = this->firsts.insert(std::make_pair(bam_get_qname(rec),pos));
+        this->fit = this->firsts.insert(std::make_pair(bam_get_qname(rec),std::make_pair(pos,pos+mate_pos)));
         if(!this->fit.second){ // second mate found
-            sorted_mates.insert(std::make_pair(this->fit.first->second,mate_pos));
+            sorted_mates.insert(std::make_pair(this->fit.first->second.first,(pos+mate_pos)-this->fit.first->second.second));
             this->firsts.erase(this->fit.first);
         }
         return this->fit.second;
@@ -530,7 +530,7 @@ public:
         if(sorted_mates.empty() || sorted_mates.begin()->first != last_returned_pos+1){
             return 0;
         }
-        uint32_t offset = sorted_mates.begin()->second - sorted_mates.begin()->first;
+        uint32_t offset = sorted_mates.begin()->second;
         sorted_mates.erase(sorted_mates.begin());
         last_returned_pos++;
         return offset;
@@ -544,9 +544,9 @@ public:
         return (!sorted_mates.empty() && sorted_mates.begin()->first == last_returned_pos+1); // return true if ready to write to disk
     }
 private:
-    std::map<std::string,uint32_t> firsts; // readname to position of the first mate
-    std::pair<std::map<std::string,uint32_t>::iterator,bool> fit;
-    std::map<uint32_t,uint32_t> sorted_mates;
+    std::map<std::string,std::pair<uint32_t,uint32_t>> firsts; // readname to 1. number of first mates seen; 2. number of second mates seen
+    std::pair<std::map<std::string,std::pair<uint32_t,uint32_t>>::iterator,bool> fit;
+    std::map<uint32_t,uint32_t> sorted_mates; // sorted by the number of first mates seen and stores the number of second mates encountered before the pair is found
     int last_returned_pos = -1; // last first mate position written
 };
 
@@ -598,7 +598,7 @@ int main(int argc, char *argv[])  {
     int prev_tid=-1;
 
     std::vector<uint32_t> rec_poss(inRecords.freaders.Count(),0); // separate counter for each input file
-    std::vector<uint32_t> both_mate_poss(inRecords.freaders.Count(),0); // separate counter for each input file
+    std::vector<uint32_t> mate_poss(inRecords.freaders.Count(),0); // separate counter for each input file
     while ((irec=inRecords.next())!=NULL) {
         brec=irec->brec;
         if(!passes_options(brec)) continue;
@@ -608,11 +608,13 @@ int main(int argc, char *argv[])  {
             // std::cout<<irec->fidx<<"\t"<<rec_poss[irec->fidx]<<"\t"<<bam_get_qname(brec->get_b())<<std::endl;
             bool first_mate;
             if((brec->get_b()->core.flag & 0x1) && !(brec->get_b()->core.flag & 0x100)){ // if paired and primary alignment
-                first_mate = mates[irec->fidx].add_read(brec->get_b(),rec_poss[irec->fidx],both_mate_poss[irec->fidx]);
+                first_mate = mates[irec->fidx].add_read(brec->get_b(),rec_poss[irec->fidx],mate_poss[irec->fidx]);
                 if(first_mate){ // read can not be written
                     rec_poss[irec->fidx]++;
                 }
-                both_mate_poss[irec->fidx]++;
+                else{
+                    mate_poss[irec->fidx]++;
+                }
                 while(true){ // get all valid mate positions to write
                     uint32_t offset = mates[irec->fidx].pop_next_valid();
                     if(offset==0) break; // no more valid mates found

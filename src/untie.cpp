@@ -66,9 +66,9 @@ public:
     Mates() = default;
     ~Mates() = default;
 
-    void add_pos(uint32_t pos,uint32_t offset){
+    void add_pos(uint32_t name,uint32_t pos,uint32_t offset){
         this->mit = this->mates.insert(std::make_pair(pos+offset,std::vector<uint32_t>{}));
-        this->mit.first->second.push_back(pos);
+        this->mit.first->second.push_back(name);
     }
 
     int pop_mate(uint32_t pos){ // given current line number - checks if the mate for this has already been added and returns the name to be assigned
@@ -89,8 +89,8 @@ private:
 } mates;
 
 uint32_t readid = 0;
-uint32_t mates_count = 0; // mates are not counted as lines by tiebrush (only the first read in pair gets counted). If a second mate of another read was written between mates of the current read - offsets might be the same. This value is used to compensate for that
-uint32_t both_mate_count = 0; // counts both mates for paired reads
+uint32_t first_mates_count = 0;
+uint32_t both_mates_count = 0;
 
 // >------------------ main() start -----
 int main(int argc, char *argv[])  {
@@ -118,18 +118,20 @@ int main(int argc, char *argv[])  {
         tie_idx.next(dupcount);
 
         for(int i=0;i<dupcount;i++){
+            int bm = both_mates_count;
+            int fm = first_mates_count;
             if(brec.get_b()->core.flag & 0x1){
                 // check if the current position already exists in the stored mates
-                int name = mates.pop_mate(both_mate_count);
+                int name = mates.pop_mate(both_mates_count);
                 if(name==-1){ // mate not found
                     // get next pair information
                     uint32_t mate_offset;
                     pair_idx.next(mate_offset);
-                    name = mates_count;
-                    mates.add_pos(mates_count,mate_offset);
-                    mates_count++;
+                    name = first_mates_count;
+                    mates.add_pos(first_mates_count,both_mates_count,mate_offset);
+                    first_mates_count++;
                 }
-                both_mate_count++;
+                both_mates_count++;
                 name = std::stoi("2" + std::to_string(name)); // adds 2 to tell it's a paired read
                 brec.replace_qname(name);
                 outfile->write(&brec);
