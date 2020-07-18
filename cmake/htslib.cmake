@@ -9,7 +9,7 @@ ExternalProject_Add(htslib
         GIT_TAG ""
         UPDATE_COMMAND ""
         BUILD_IN_SOURCE 1
-        CONFIGURE_COMMAND autoheader COMMAND autoconf COMMAND ${htslib_PREFIX}/src/htslib/configure
+        CONFIGURE_COMMAND autoheader COMMAND autoconf COMMAND ${htslib_PREFIX}/src/htslib/configure --without-libdeflate
         BUILD_COMMAND make -C ${htslib_PREFIX}/src/htslib "CFLAGS=-g -Wall -O3" libhts.a
         INSTALL_COMMAND ""
         )
