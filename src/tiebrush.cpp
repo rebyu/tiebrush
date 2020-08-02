@@ -27,7 +27,8 @@ const char* USAGE="TieBrush v" VERSION " usage:\n"
                   "  --keep_quals,-U   : keep quality strings for the collapsed records. Note that quality strings are randomly chosen if 2 or more records are collapsed\n"
                   "  --index,-I        : write an index to enable sample extraction from the collapsed output\n"
                   "  -N                : maximum NH score (if available) to include\n"
-                  "  -Q                : minimum mapping quality to include\n";
+                  "  -Q                : minimum mapping quality to include\n"
+                  "  -F                : will treat all reads with the following flags set as single-end when constructing a pairing index\n";
 
 enum TMrgStrategy {
     tMrgStratFull=0, // same CIGAR and MD
@@ -44,6 +45,7 @@ struct Options{
     bool keep_unmapped = true;
     bool keep_supplementary = false;
     bool index = false;
+    uint32_t flags = 0;
 } options;
 
 TMrgStrategy mrgStrategy=tMrgStratFull;
@@ -222,8 +224,24 @@ struct RDistanceData {
 
 RDistanceData rspacing;
 
+// check the two reads for compatibility with user provided flags
+// if unmapped or partially mapped pair are to be indexed - cmp function needs to also compare sequences of the two reads to determine whether collapsement is possible
+int cmpFlags(GSamRecord& a, GSamRecord& b){
+    if(options.flags == 0){
+        return 0;
+    }
+    if((options.flags & 0x4) || (options.flags & 0x8)){ // requested indexing unmapped reads in pairs
+        if(a.get_b()->core.flag & 0x4 || b.get_b()->core.flag & 0x4){ // if current read is unpaired - need to compare sequences
+            return std::strcmp(a.sequence(),b.sequence());
+        }
+    }
+    return 0;
+}
+
 int cmpFull(GSamRecord& a, GSamRecord& b) {
     //-- CIGAR && MD strings
+    bool cmp_flag = cmpFlags(a,b);
+    if(cmp_flag!=0) return cmp_flag;
     if (a.get_b()->core.n_cigar!=b.get_b()->core.n_cigar) return ((int)a.get_b()->core.n_cigar - (int)b.get_b()->core.n_cigar);
     int cigar_cmp=0;
     if (a.get_b()->core.n_cigar>0)
@@ -241,12 +259,16 @@ int cmpFull(GSamRecord& a, GSamRecord& b) {
 }
 
 int cmpCigar(GSamRecord& a, GSamRecord& b) {
+    bool cmp_flag = cmpFlags(a,b);
+    if(cmp_flag!=0) return cmp_flag;
     if (a.get_b()->core.n_cigar!=b.get_b()->core.n_cigar) return ((int)a.get_b()->core.n_cigar - (int)b.get_b()->core.n_cigar);
     if (a.get_b()->core.n_cigar==0) return 0;
     return memcmp(bam_get_cigar(a.get_b()) , bam_get_cigar(b.get_b()), a.get_b()->core.n_cigar*sizeof(uint32_t) );
 }
 
 int cmpCigarClip(GSamRecord& a, GSamRecord& b) {
+    bool cmp_flag = cmpFlags(a,b);
+    if(cmp_flag!=0) return cmp_flag;
     uint32_t a_clen=a.get_b()->core.n_cigar;
     uint32_t b_clen=b.get_b()->core.n_cigar;
     uint32_t* a_cstart=bam_get_cigar(a.get_b());
@@ -265,6 +287,8 @@ int cmpCigarClip(GSamRecord& a, GSamRecord& b) {
 }
 
 int cmpExons(GSamRecord& a, GSamRecord& b) {
+    bool cmp_flag = cmpFlags(a,b);
+    if(cmp_flag!=0) return cmp_flag;
     if (a.exons.Count()!=b.exons.Count()) return (a.exons.Count()-b.exons.Count());
     for (int i=0;i<a.exons.Count();i++) {
         if (a.exons[i].start!=b.exons[i].start)
@@ -489,8 +513,10 @@ void flushPData(GList<SPData>& spdlst){ //write spdata to outfile
         else spd.r->remove_tag("YD");
         spd.r->replace_qname(1);
         outfile->write(spd.r);
-        for(int bidx=0;bidx<spd.samples->size();bidx++){
-            dis[bidx].add(spd.sample_dupcounts[bidx],outfps[bidx].dup_outfp);
+        if(options.index){
+            for(int bidx=0;bidx<spd.samples->size();bidx++){
+                dis[bidx].add(spd.sample_dupcounts[bidx],outfps[bidx].dup_outfp);
+            }
         }
         outCounter++;
     }
@@ -503,6 +529,29 @@ bool passes_options(GSamRecord* brec){
     if(brec->mapq()<options.min_qual) return false;
     int nh = brec->tag_int("NH");
     if(nh>options.max_nh)  return false;
+
+    return true;
+}
+
+bool passes_pair_flags(GSamRecord* brec){
+//    if(std::strcmp(bam_get_qname(brec->get_b()),"SRR1071717.24796759")==0){
+//        std::cout<<"found"<<std::endl;
+//    }
+    bool base_flag_pass = (brec->get_b()->core.flag & 0x1) && !(brec->get_b()->core.flag & 0x100) && !(brec->get_b()->core.flag & 0x800); // must always be satisfied for a pair index to be generated no matter the other options
+    if(!base_flag_pass){
+        return false;
+    }
+    //  need to check user options
+    if(!(brec->get_b()->core.flag & 0x2)){ // current read is not mapped as a valid pair
+        if(!(options.flags & 0x2)){ // user did not requested indexing invalid pairs
+            return false;
+        }
+    }
+    if((brec->get_b()->core.flag & 0x4) || (brec->get_b()->core.flag & 0x8)){ // current pair has one of the mates unmapped
+        if(!(options.flags & 0x4 || options.flags & 0x8)){ // user did not request these flags to be required for pairing
+            return false;
+        }
+    }
 
     return true;
 }
@@ -605,9 +654,29 @@ int main(int argc, char *argv[])  {
 
         if(options.index){
             // process mate information
-            // std::cout<<irec->fidx<<"\t"<<rec_poss[irec->fidx]<<"\t"<<bam_get_qname(brec->get_b())<<std::endl;
+            // TODO: standardize flags
+            //   1. needs to only be checked for pair indexing
+            //   2. needs to be implemented here in main
+            //   3. needs to be passed to collapsement (for example, if pairs with a single mapped read or both reads unmapped need to be indexed as well - collapsement strategy needs to be adjusted to look at sequence data for such redas and only collapse reads with the same sequence
+            //   Rules:
+            //     1. only paired reads (0x1) are considered no matter the passed flags
+            //     2. only primary mappings (!0x100 && !0x800) are considered no matter the passed flags
+            //   Flags to be enabled:
+            //     1. read mapped in proper pair (low memory - no need for tmp data)
+            //     2. read unmapped/mate unmapped (needs to be passed to collapsement to perform sequence evaluation)
+
             bool first_mate;
-            if((brec->get_b()->core.flag & 0x1) && !(brec->get_b()->core.flag & 0x100)){ // if paired and primary alignment
+            if(passes_pair_flags(brec)){ // if paired and primary alignment
+//                if(std::strcmp(bam_get_qname(brec->get_b()),"SRR1071717.24796759")==0){
+//                    std::cout<<"found"<<std::endl;
+//                }
+//                if(brec->get_b()->core.flag &0x4){
+//                    std::cout<<"current unmapped"<<std::endl;
+//                }
+//                if(brec->get_b()->core.flag &0x8){
+//                    std::cout<<"mate unmapped: "<<bam_get_qname(brec->get_b())<<std::endl;
+//                }
+
                 first_mate = mates[irec->fidx].add_read(brec->get_b(),rec_poss[irec->fidx],mate_poss[irec->fidx]);
                 if(first_mate){ // read can not be written
                     rec_poss[irec->fidx]++;
@@ -618,6 +687,7 @@ int main(int argc, char *argv[])  {
                 while(true){ // get all valid mate positions to write
                     uint32_t offset = mates[irec->fidx].pop_next_valid();
                     if(offset==0) break; // no more valid mates found
+//                    std::cout<<bam_get_qname(brec->get_b())<<std::endl;
                     pis[irec->fidx].add(offset,outfps[irec->fidx].pair_outfp);
                 }
             }
@@ -689,6 +759,10 @@ void processOptions(int argc, char* argv[]) {
     GStr min_qual_str=args.getOpt('Q');
     if (!min_qual_str.is_empty()) {
         options.min_qual=min_qual_str.asInt();
+    }
+    GStr flag_str=args.getOpt('F');
+    if (!flag_str.is_empty()) {
+        options.flags=flag_str.asInt();
     }
     options.keep_supplementary = (args.getOpt("keep_supp")!=NULL || args.getOpt("S")!=NULL);
     options.keep_unmapped = (args.getOpt("keep_unmap")!=NULL || args.getOpt("M")!=NULL);
