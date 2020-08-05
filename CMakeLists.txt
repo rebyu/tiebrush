@@ -58,21 +58,6 @@ add_executable(tiecov src/tiecov.cpp
 add_dependencies(tiecov htslib zlib)
 target_link_libraries(tiecov ${htslib_LIB} ${zlib_LIB} -lbz2 -llzma -pthread -lcrypto -lcurl)
 
-add_executable(tiecov_sjs src/tiecov_sjs.cpp
-        src/GSam.cpp
-        src/GSam.h
-        src/tmerge.cpp
-        src/tmerge.h
-        ${gclib_SOURCE_DIR}/GStr.h
-        ${gclib_SOURCE_DIR}/GStr.cpp
-        ${gclib_SOURCE_DIR}/GArgs.h
-        ${gclib_SOURCE_DIR}/GArgs.cpp
-        ${gclib_SOURCE_DIR}/GBase.h
-        ${gclib_SOURCE_DIR}/GBase.cpp)
-
-add_dependencies(tiecov_sjs htslib zlib)
-target_link_libraries(tiecov_sjs ${htslib_LIB} ${zlib_LIB} -lbz2 -llzma -pthread -lcrypto -lcurl)
-
 add_executable(untie src/untie.cpp
                 src/GSam.cpp
                 src/GSam.h
@@ -87,36 +72,6 @@ add_executable(untie src/untie.cpp
 
 add_dependencies(untie htslib zlib)
 target_link_libraries(untie ${htslib_LIB} ${zlib_LIB} -lbz2 -llzma -pthread -lcrypto -lcurl)
-
-add_executable(extract_pairs src/extract_pairs.cpp
-        src/GSam.cpp
-        src/GSam.h
-        src/tmerge.cpp
-        src/tmerge.h
-        ${gclib_SOURCE_DIR}/GStr.h
-        ${gclib_SOURCE_DIR}/GStr.cpp
-        ${gclib_SOURCE_DIR}/GArgs.h
-        ${gclib_SOURCE_DIR}/GArgs.cpp
-        ${gclib_SOURCE_DIR}/GBase.h
-        ${gclib_SOURCE_DIR}/GBase.cpp)
-
-add_dependencies(extract_pairs htslib zlib)
-target_link_libraries(extract_pairs ${htslib_LIB} ${zlib_LIB} -lbz2 -llzma -pthread -lcrypto -lcurl)
-
-add_executable(tieclean src/tieclean.cpp
-        src/GSam.cpp
-        src/GSam.h
-        src/tmerge.cpp
-        src/tmerge.h
-        ${gclib_SOURCE_DIR}/GStr.h
-        ${gclib_SOURCE_DIR}/GStr.cpp
-        ${gclib_SOURCE_DIR}/GArgs.h
-        ${gclib_SOURCE_DIR}/GArgs.cpp
-        ${gclib_SOURCE_DIR}/GBase.h
-        ${gclib_SOURCE_DIR}/GBase.cpp)
-
-add_dependencies(tieclean htslib zlib)
-target_link_libraries(tieclean ${htslib_LIB} ${zlib_LIB} -lbz2 -llzma -pthread -lcrypto -lcurl)
 
 add_executable(tieme src/tieme.cpp
         src/GSam.cpp
