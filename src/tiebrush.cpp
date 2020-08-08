@@ -450,21 +450,28 @@ private:
     char * buffer;
     int nr = 0;
     GStr fname;
-    std::fstream outfp;
+    FILE *bz2File;
+    BZFILE *myBZ;
 
     void write(){
-        outfp.write(buffer,nr*4);
+        int bzError;
+        BZ2_bzWrite(&bzError, myBZ, buffer, nr*4/*sizeof(buffer[0]) * buffer.size()*/);
         nr=0;
     }
 public:
     Index(GStr const & _fname) : fname(_fname) {
         buffer = new char[1024*4096];
-        outfp.open(fname, std::ios::out | std::ios::binary);
-        if (!outfp.good())
-            GError("Error creating duplicity index file %s\n", fname.chars());
+        bz2File = fopen(fname + ".bz2", "wb");
+        int bzError;
+        myBZ = BZ2_bzWriteOpen(&bzError, bz2File,
+                                       9,   // blockSize100k, compression [1-9]
+                                       0,   // verbosity
+                                       30); // workFactor, controls speed, important for highly repetitive data
     };
     ~Index() {
         write();
+        int bzError;
+        BZ2_bzWriteClose(&bzError, myBZ, 0, NULL, NULL);
         delete[] buffer;
     };
 
@@ -474,12 +481,14 @@ public:
     }; // default constructor
     Index(const Index&) = delete; // copy constructor
     Index(Index&& other) noexcept // move constructor
-//        : fname(std::__exchange(other.fname, "")), outfp(std::__exchange(other.outfp, std::fstream()))
     {
         buffer = std::move(other.buffer);
         other.buffer = nullptr;
         fname = std::move(other.fname);
-        outfp = std::move(other.outfp);
+        bz2File = std::move(other.bz2File);
+        myBZ = std::move(other.myBZ);
+        other.bz2File = nullptr;
+        other.myBZ = nullptr;
     }
     Index& operator=(const Index &) = delete; // copy assignment
     Index& operator=(Index&&) noexcept = delete; // move assignment
