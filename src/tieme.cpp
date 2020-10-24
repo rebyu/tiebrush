@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cstring>
 
-#define VERSION "0.0.3"
+#define VERSION "0.0.5"
 
 // Merge two indices together
 const char* USAGE="TieMe v" VERSION " usage:\n"

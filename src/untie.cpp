@@ -15,7 +15,7 @@
 #include <cstring>
 #include <unordered_map>
 
-#define VERSION "0.0.3"
+#define VERSION "0.0.5"
 
 const char* USAGE="UnTie v" VERSION " usage:\n"
                   " untie [-b out.flt.bam] [-i index.tbd] [-p index.tbp] in.bam\n";

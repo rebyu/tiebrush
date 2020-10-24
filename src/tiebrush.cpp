@@ -1,16 +1,30 @@
+#include <vector>
+#include <cstring>
+#include <stdlib.h>
+#include <iostream>
+#include <fstream>
+
 #include "GSam.h"
 #include "GArgs.h"
 #include "tmerge.h"
 #include "GBitVec.h"
 
-#define VERSION "0.0.2"
+#define VERSION "0.0.5"
 
 const char* USAGE="TieBrush v" VERSION " usage:\n"
-" tiebrush [-o <outfile>.bam] list.txt | in1.bam in2.bam ...\n"
-" Other options: \n"
-"  --cigar,-C   : merge if only CIGAR string is the same\n"
-"  --clip,-P    : merge if clipped CIGAR string is the same\n"
-"  --exon,-E   : merge if exon boundaries are the same\n";
+                  " tiebrush [-o <outfile>.bam] list.txt | in1.bam in2.bam ...\n"
+                  " Other options: \n"
+                  "  --cigar,-C        : merge if only CIGAR string is the same\n"
+                  "  --clip,-P         : merge if clipped CIGAR string is the same\n"
+                  "  --exon,-E         : merge if exon boundaries are the same\n"
+                  "  --keep_supp,-S    : keep supplementary alignments\n"
+                  "  --keep_unmap,-M   : keep unmapped reads as well\n"
+                  "  --keep_names,-K   : keep names in the original format. if not set - all values will be set incrementally\n"
+                  "  --keep_quals,-U   : keep quality strings for the collapsed records. Note that quality strings are randomly chosen if 2 or more records are collapsed\n"
+                  "  --index,-I        : write an index to enable sample extraction from the collapsed output\n"
+                  "  -N                : maximum NH score (if available) to include\n"
+                  "  -Q                : minimum mapping quality to include\n"
+                  "  -F                : will treat all reads with the following flags set as single-end when constructing a pairing index\n";
 
 enum TMrgStrategy {
 	tMrgStratFull=0, // same CIGAR and MD
@@ -18,6 +32,17 @@ enum TMrgStrategy {
 	tMrgStratClip,   // same CIGAR after clipping
 	tMrgStratExon    // same exons
 };
+
+struct Options{
+    int max_nh = MAX_INT;
+    int min_qual = -1;
+    bool keep_names = false;
+    bool keep_quals = false;
+    bool keep_unmapped = true;
+    bool keep_supplementary = false;
+    bool index = false;
+    uint32_t flags = 0;
+} options;
 
 TMrgStrategy mrgStrategy=tMrgStratFull;
 TInputFiles inRecords;
@@ -197,7 +222,27 @@ struct RDistanceData {
 
 RDistanceData rspacing;
 
+// check the two reads for compatibility with user provided flags
+// if unmapped or partially mapped pair are to be indexed - cmp function needs to also compare sequences of the two reads to determine whether collapsement is possible
+int cmpFlags(GSamRecord& a, GSamRecord& b){
+    if(options.flags == 0){
+        return 0;
+    }
+    if((options.flags & 0x4) || (options.flags & 0x8)){ // requested indexing unmapped reads in pairs
+        if(a.get_b()->core.flag & 0x4 && b.get_b()->core.flag & 0x4){ // if current read is unpaired - need to compare sequences
+            return std::strcmp(a.sequence(),b.sequence());
+        }
+        else{
+            return -1; // not both reads are unmapped
+        }
+    }
+    return 0;
+}
+
 int cmpFull(GSamRecord& a, GSamRecord& b) {
+    //-- Flags
+    bool cmp_flag = cmpFlags(a,b);
+    if(cmp_flag!=0) return cmp_flag;
 	//-- CIGAR && MD strings
 	if (a.get_b()->core.n_cigar!=b.get_b()->core.n_cigar) return ((int)a.get_b()->core.n_cigar - (int)b.get_b()->core.n_cigar);
 	int cigar_cmp=0;
@@ -216,12 +261,16 @@ int cmpFull(GSamRecord& a, GSamRecord& b) {
 }
 
 int cmpCigar(GSamRecord& a, GSamRecord& b) {
+    bool cmp_flag = cmpFlags(a,b);
+    if(cmp_flag!=0) return cmp_flag;
 	if (a.get_b()->core.n_cigar!=b.get_b()->core.n_cigar) return ((int)a.get_b()->core.n_cigar - (int)b.get_b()->core.n_cigar);
 	if (a.get_b()->core.n_cigar==0) return 0;
 	return memcmp(bam_get_cigar(a.get_b()) , bam_get_cigar(b.get_b()), a.get_b()->core.n_cigar*sizeof(uint32_t) );
 }
 
 int cmpCigarClip(GSamRecord& a, GSamRecord& b) {
+    bool cmp_flag = cmpFlags(a,b);
+    if(cmp_flag!=0) return cmp_flag;
 	uint32_t a_clen=a.get_b()->core.n_cigar;
 	uint32_t b_clen=b.get_b()->core.n_cigar;
 	uint32_t* a_cstart=bam_get_cigar(a.get_b());
@@ -240,6 +289,8 @@ int cmpCigarClip(GSamRecord& a, GSamRecord& b) {
 }
 
 int cmpExons(GSamRecord& a, GSamRecord& b) {
+    bool cmp_flag = cmpFlags(a,b);
+    if(cmp_flag!=0) return cmp_flag;
 	if (a.exons.Count()!=b.exons.Count()) return (a.exons.Count()-b.exons.Count());
 	for (int i=0;i<a.exons.Count();i++) {
 		if (a.exons[i].start!=b.exons[i].start)
@@ -261,6 +312,8 @@ class SPData { // Same Point data
 	int64_t maxYD; //max bundle extent upstream in all samples (0 when no preceding overlapping reads)
 	GBitVec* samples; //which samples were the collapsed ones coming from
 	                 //number of bits set will be stored as YX:i:(samples.count()+accYX)
+    std::vector<uint64_t> sample_dupcounts; // within each sample how many records were collapsed
+                                            // number of bits set will be stored as YX:i:(samples.count()+accYX)
 	int dupCount; //duplicity count - how many single-alignments were merged into r
 	              // will be stored as tag YC:i:(dupCount+accYC)
 	GSamRecord* r;
@@ -273,6 +326,7 @@ class SPData { // Same Point data
     ~SPData() {
     	if (settled && r!=NULL) delete r;
     	if (samples!=NULL) delete samples;
+        if (!sample_dupcounts.empty()) sample_dupcounts.clear();
     }
 
     void detach(bool dontFree=true) { settled=!dontFree; }
@@ -282,8 +336,12 @@ class SPData { // Same Point data
     	// duplicates the current record
     	settled=true;
     	trec.disown();
-    	if (samples==NULL)
-    		samples=new GBitVec(inRecords.freaders.Count());
+    	if (samples==NULL) {
+            samples = new GBitVec(inRecords.freaders.Count());
+        }
+        if (sample_dupcounts.empty()){
+            sample_dupcounts.assign(inRecords.freaders.Count(),0);
+        }
 
     	if (trec.tbMerged) {
     		accYC=r->tag_int("YC", 1);
@@ -292,6 +350,7 @@ class SPData { // Same Point data
     	} else {
     		++dupCount;
     		samples->set(trec.fidx);
+            sample_dupcounts[trec.fidx]++;
     	}
     }
 
@@ -310,6 +369,7 @@ class SPData { // Same Point data
     				strcmp(r->name(), rec.name())!=0) {
     		   dupCount++;
     		   samples->set(trec.fidx);
+    		   sample_dupcounts[trec.fidx]++;
     		}
     	}
     }
@@ -321,6 +381,11 @@ class SPData { // Same Point data
     	if (r->start!=b.r->start) return (r->start<b.r->start);
     	if (tstrand!=b.tstrand) return (tstrand<b.tstrand);
     	if (r->end!=b.r->end) return (r->end<b.r->end);
+        if(options.index) {
+            if ((r->get_b()->core.flag & 0x1) != (b.r->get_b()->core.flag & 0x1)) {
+                return r->get_b()->core.flag & 0x1;
+            }
+        }
     	if (mrgStrategy==tMrgStratFull) {
     		int ret=cmpFull(*r, *(b.r));
     		return (ret<0);
@@ -339,6 +404,11 @@ class SPData { // Same Point data
     	if (r==NULL || b.r==NULL) GError("Error: cannot compare uninitialized SAM records\n");
     	if (r->refId()!=b.r->refId() || r->start!=b.r->start || tstrand!=b.tstrand ||
     			r->end!=b.r->end) return false;
+        if(options.index) {
+            if ((r->get_b()->core.flag & 0x1) != (b.r->get_b()->core.flag & 0x1)) {
+                return false;
+            }
+        }
     	if (mrgStrategy==tMrgStratFull) return (cmpFull(*r, *(b.r))==0);
     	else
     		switch (mrgStrategy) {
@@ -372,20 +442,75 @@ void addPData(TInputRecord& irec, GList<SPData>& spdlst) {
 	newspd->settle(irec); //keep its own SAM record copy
 }
 
+void init_index_dir(GStr idx_dir){
+    struct stat sb;
+    if (stat(idx_dir.chars(), &sb) == 0 && S_ISDIR(sb.st_mode)) {
+        std::cerr<<"index directory already exists"<<std::endl;
+        exit(-1);
+    }
+
+    const int dir_err = mkdir(idx_dir.chars(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    if (-1 == dir_err){
+        printf("Error creating index directory\n");
+        exit(1);
+    }
+}
+
+struct Index{
+public:
+    Index() = default;
+    ~Index() = default;
+
+    void add(uint64_t dupcount,std::fstream* out_fp){
+        buffer[nr*4]   = (dupcount >> 24) & 0xFF;
+        buffer[(nr*4)+1] = (dupcount >> 16) & 0xFF;
+        buffer[(nr*4)+2] = (dupcount >> 8) & 0xFF;
+        buffer[(nr*4)+3] = dupcount & 0xFF;
+
+        nr += 1;
+
+        if(nr*4 == 1024*4096){
+            write(out_fp);
+        }
+    }
+    void clear(std::fstream* out_fp){
+        write(out_fp);
+    }
+private:
+    char buffer[1024*4096];
+    int nr = 0;
+
+    void write(std::fstream* out_fp){
+        out_fp->write(buffer,nr*4);
+        nr=0;
+    }
+};
+
+std::vector<Index> dis;
+
+struct OutFPs{
+    std::fstream* dup_outfp;
+    std::fstream* pair_outfp; // Not supported at the moment
+    GStr dup_outfname,pair_outfname;
+};
+std::vector<OutFPs> outfps; // duplicity_out, pair_tmp_out, pair_out
+
 void flushPData(GList<SPData>& spdlst){ //write spdata to outfile
   if (spdlst.Count()==0) return;
   // write SAM records in spdata to outfile
   for (int i=0;i<spdlst.Count();++i) {
 	  SPData& spd=*(spdlst.Get(i));
 	  int64_t accYC=spd.accYC+spd.dupCount;
+      if(spd.accYC+spd.dupCount > UINT32_MAX){ // set a cap to prevent overflow with SAM
+          accYC = UINT32_MAX;
+      }
 	  int64_t accYX=spd.accYX;
 	  int dSamples=spd.samples->count(); //this only has direct, non-TieBrush samples
 	  accYX+=dSamples;
 	  if (accYC>1) spd.r->add_int_tag("YC", accYC);
 	  if (accYX>1) spd.r->add_int_tag("YX", accYX);
 	  int dmax=spd.maxYD;
-	  for(int s=spd.samples->find_first();s>=0;
-	    		s=spd.samples->find_next(s)) {
+	  for(int s=spd.samples->find_first();s>=0;s=spd.samples->find_next(s)) {
 	    	if (spd.tstrand=='+' || spd.tstrand=='.') {
 	    	   int r=rspacing.fsegs[s].processRead(*spd.r);
 	    	   if (r>dmax) dmax=r;
@@ -399,9 +524,24 @@ void flushPData(GList<SPData>& spdlst){ //write spdata to outfile
 	  if (spd.maxYD>0) spd.r->add_int_tag("YD", spd.maxYD);
 	  else spd.r->remove_tag("YD");
 	  outfile->write(spd.r);
+      if(options.index){
+          for(int bidx=0;bidx<spd.samples->size();bidx++){
+              dis[bidx].add(spd.sample_dupcounts[bidx],outfps[bidx].dup_outfp);
+          }
+      }
 	  outCounter++;
   }
   spdlst.Clear();
+}
+
+bool passes_options(GSamRecord* brec){
+    if(!options.keep_supplementary && brec->get_b()->core.flag & 0x100) return false;
+    if(!options.keep_unmapped && brec->isUnmapped()) return false;
+    if(brec->mapq()<options.min_qual) return false;
+    int nh = brec->tag_int("NH");
+    if(nh>options.max_nh)  return false;
+
+    return true;
 }
 
 // >------------------ main() start -----
@@ -417,13 +557,30 @@ int main(int argc, char *argv[])  {
 	TInputRecord* irec=NULL;
 	GSamRecord* brec=NULL;
 
+    if(options.index){
+        for(int fi=0;fi<inRecords.freaders.Count();fi++){
+            outfps.push_back(OutFPs());
+
+            outfps.back().dup_outfname = inRecords.freaders[fi]->fname.copy();
+            outfps.back().dup_outfname.append(".tbd");
+            outfps.back().dup_outfp = new std::fstream();
+            outfps.back().dup_outfp->open(outfps.back().dup_outfname,std::ios::out | std::ios::binary);
+            if (!outfps.back().dup_outfp->good()) GError("Error creating duplicity index file %s\n",outfps.back().dup_outfname.chars());
+            dis.push_back(Index());
+        }
+    }
+
+    // TODO: 1. accept indices through parameters (if fps in header are not valid)
+    //       2. write tiebrush parameters to header
+    //       3. need ability to extend indices when multiple previously collapsed records are collapsed together
+
 	GList<SPData> spdata(true, true, true); //list of Same Position data, with all possibly merged records
 	bool newChr=false;
 	int prev_pos=-1;
 	int prev_tid=-1;
 	while ((irec=inRecords.next())!=NULL) {
 		 brec=irec->brec;
-		 if (brec->isUnmapped()) continue;
+         if(!passes_options(brec)) continue;
 		 inCounter++;
 		 int tid=brec->refId();
 		 int pos=brec->start; //1-based
@@ -446,6 +603,14 @@ int main(int argc, char *argv[])  {
     flushPData(spdata);
 	delete outfile;
 	inRecords.stop();
+
+    if(options.index){
+        for(int i=0;i<dis.size();i++){
+            dis[i].clear(outfps[i].dup_outfp);
+            delete outfps[i].dup_outfp;
+        }
+    }
+
     //if (verbose) {
     double p=100.00 - (double)(outCounter*100.00)/(double)inCounter;
     GMessage("%ld input records written as %ld (%.2f%% reduction)\n", inCounter, outCounter, p);
@@ -454,45 +619,63 @@ int main(int argc, char *argv[])  {
 // <------------------ main() end -----
 
 void processOptions(int argc, char* argv[]) {
-	GArgs args(argc, argv, "help;debug;verbose;version;cigar;clip;exon;CPEDVho:");
-	args.printError(USAGE, true);
-	if (args.getOpt('h') || args.getOpt("help") || args.startNonOpt()==0) {
-		GMessage(USAGE);
-		exit(1);
-	}
+    GArgs args(argc, argv, "help;debug;verbose;version;cigar;clip;exon;keep_names;keep_quals;index;CPEKUIDVho:N:Q:");
+    args.printError(USAGE, true);
+    if (args.getOpt('h') || args.getOpt("help") || args.startNonOpt()==0) {
+        GMessage(USAGE);
+        exit(1);
+    }
 
-	if (args.getOpt('h') || args.getOpt("help")) {
-		fprintf(stdout,"%s",USAGE);
-	    exit(0);
-	}
-	bool stratC=(args.getOpt("cigar")!=NULL || args.getOpt('C')!=NULL);
-	bool stratP=(args.getOpt("clip")!=NULL || args.getOpt('P')!=NULL);
-	bool stratE=(args.getOpt("exon")!=NULL || args.getOpt('E')!=NULL);
-	if (stratC | stratP | stratE) {
-		if (!(stratC ^ stratP ^ stratE))
-			GError("Error: only one merging strategy can be requested.\n");
-		if (stratC) mrgStrategy=tMrgStratCIGAR;
-		else if (stratP) mrgStrategy=tMrgStratClip;
-		else mrgStrategy=tMrgStratExon;
-	}
+    if (args.getOpt('h') || args.getOpt("help")) {
+        fprintf(stdout,"%s",USAGE);
+        exit(0);
+    }
 
-	debugMode=(args.getOpt("debug")!=NULL || args.getOpt('D')!=NULL);
-	verbose=(args.getOpt("verbose")!=NULL || args.getOpt('V')!=NULL);
-	if (args.getOpt("version")) {
-	   fprintf(stdout,"%s\n", VERSION);
-	   exit(0);
-	}
-	 //verbose=(args.getOpt('v')!=NULL);
-	if (verbose) {
-	   fprintf(stderr, "Running TieBrush " VERSION ". Command line:\n");
-	   args.printCmdLine(stderr);
-	}
-	outfname=args.getOpt('o');
-	const char* ifn=NULL;
-	while ( (ifn=args.nextNonOpt())!=NULL) {
-		//input alignment files
-		inRecords.addFile(ifn);
-	}
+    GStr max_nh_str=args.getOpt('N');
+    if (!max_nh_str.is_empty()) {
+        options.max_nh=max_nh_str.asInt();
+    }
+    GStr min_qual_str=args.getOpt('Q');
+    if (!min_qual_str.is_empty()) {
+        options.min_qual=min_qual_str.asInt();
+    }
+    GStr flag_str=args.getOpt('F');
+    if (!flag_str.is_empty()) {
+        options.flags=flag_str.asInt();
+    }
+    options.keep_supplementary = (args.getOpt("keep_supp")!=NULL || args.getOpt("S")!=NULL);
+    options.keep_unmapped = (args.getOpt("keep_unmap")!=NULL || args.getOpt("M")!=NULL);
+    options.keep_names = (args.getOpt("keep_names")!=NULL || args.getOpt("K")!=NULL);
+    options.keep_quals = (args.getOpt("keep_quals")!=NULL || args.getOpt("U")!=NULL);
+    options.index = (args.getOpt("index")!=NULL || args.getOpt("I")!=NULL);
+
+    bool stratC=(args.getOpt("cigar")!=NULL || args.getOpt('C')!=NULL);
+    bool stratP=(args.getOpt("clip")!=NULL || args.getOpt('P')!=NULL);
+    bool stratE=(args.getOpt("exon")!=NULL || args.getOpt('E')!=NULL);
+    if (stratC | stratP | stratE) {
+        if (!(stratC ^ stratP ^ stratE))
+            GError("Error: only one merging strategy can be requested.\n");
+        if (stratC) mrgStrategy=tMrgStratCIGAR;
+        else if (stratP) mrgStrategy=tMrgStratClip;
+        else mrgStrategy=tMrgStratExon;
+    }
+
+    debugMode=(args.getOpt("debug")!=NULL || args.getOpt('D')!=NULL);
+    verbose=(args.getOpt("verbose")!=NULL || args.getOpt('V')!=NULL);
+    if (args.getOpt("version")) {
+        fprintf(stdout,"%s\n", VERSION);
+        exit(0);
+    }
+    //verbose=(args.getOpt('v')!=NULL);
+    if (verbose) {
+        fprintf(stderr, "Running TieBrush " VERSION ". Command line:\n");
+        args.printCmdLine(stderr);
+    }
+    outfname=args.getOpt('o');
+
+    const char* ifn=NULL;
+    while ( (ifn=args.nextNonOpt())!=NULL) {
+        //input alignment files
+        inRecords.addFile(ifn);
+    }
 }
-
-

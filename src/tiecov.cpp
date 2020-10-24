@@ -3,7 +3,7 @@
 #include "GVec.hh"
 #include "GSam.h"
 
-#define VERSION "0.0.3"
+#define VERSION "0.0.5"
 
 const char* USAGE="TieCov v" VERSION " usage:\n"
                   " tiecov [-b out.flt.bam] [-c out.bedgraph] [-j out.junctions.bed] in.bam\n"
