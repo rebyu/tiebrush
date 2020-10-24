@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <map>
 
+#include "bzlib.h"
+
 #define VERSION "0.0.2"
 
 // TODO: python (or C++) wrapper for tiebrush to perform large jobs in parallel and merge things hierarchically correctly
@@ -444,43 +446,68 @@ void init_index_dir(GStr idx_dir){
 }
 
 struct Index{
-public:
-    Index() = default;
-    ~Index() = default;
+private:
+    char * buffer;
+    int nr = 0;
+    GStr fname;
+    FILE *bz2File;
+    BZFILE *myBZ;
 
-    void add(uint64_t dupcount,std::fstream* out_fp){
+    void write(){
+        int bzError;
+        BZ2_bzWrite(&bzError, myBZ, buffer, nr*4/*sizeof(buffer[0]) * buffer.size()*/);
+        nr=0;
+    }
+public:
+    Index(GStr const & _fname) : fname(_fname) {
+        buffer = new char[1024*4096];
+        bz2File = fopen(fname + ".bz2", "wb");
+        int bzError;
+        myBZ = BZ2_bzWriteOpen(&bzError, bz2File,
+                                       9,   // blockSize100k, compression [1-9]
+                                       0,   // verbosity
+                                       30); // workFactor, controls speed, important for highly repetitive data
+    };
+    ~Index() {
+        write();
+        int bzError;
+        BZ2_bzWriteClose(&bzError, myBZ, 0, NULL, NULL);
+        delete[] buffer;
+    };
+
+    Index()
+    {
+        buffer = new char[1024*4096];
+    }; // default constructor
+    Index(const Index&) = delete; // copy constructor
+    Index(Index&& other) noexcept // move constructor
+    {
+        buffer = std::move(other.buffer);
+        other.buffer = nullptr;
+        fname = std::move(other.fname);
+        bz2File = std::move(other.bz2File);
+        myBZ = std::move(other.myBZ);
+        other.bz2File = nullptr;
+        other.myBZ = nullptr;
+    }
+    Index& operator=(const Index &) = delete; // copy assignment
+    Index& operator=(Index&&) noexcept = delete; // move assignment
+
+    void add(uint64_t dupcount){
         buffer[nr*4]   = (dupcount >> 24) & 0xFF;
         buffer[(nr*4)+1] = (dupcount >> 16) & 0xFF;
         buffer[(nr*4)+2] = (dupcount >> 8) & 0xFF;
         buffer[(nr*4)+3] = dupcount & 0xFF;
 
-        nr += 1;
+        ++nr;
 
         if(nr*4 == 1024*4096){
-            write(out_fp);
+            write();
         }
-    }
-    void clear(std::fstream* out_fp){
-        write(out_fp);
-    }
-private:
-    char buffer[1024*4096];
-    int nr = 0;
-
-    void write(std::fstream* out_fp){
-        out_fp->write(buffer,nr*4);
-        nr=0;
     }
 };
 
 std::vector<Index> dis,pis;
-
-struct OutFPs{
-    std::fstream* dup_outfp;
-    std::fstream* pair_outfp;
-    GStr dup_outfname,pair_outfname;
-};
-std::vector<OutFPs> outfps; // duplicity_out, pair_tmp_out, pair_out
 
 void flushPData(GList<SPData>& spdlst){ //write spdata to outfile
     if (spdlst.Count()==0) return;
@@ -515,7 +542,7 @@ void flushPData(GList<SPData>& spdlst){ //write spdata to outfile
         outfile->write(spd.r);
         if(options.index){
             for(int bidx=0;bidx<spd.samples->size();bidx++){
-                dis[bidx].add(spd.sample_dupcounts[bidx],outfps[bidx].dup_outfp);
+                dis[bidx].add(spd.sample_dupcounts[bidx]);
             }
         }
         outCounter++;
@@ -619,21 +646,13 @@ int main(int argc, char *argv[])  {
         for(int fi=0;fi<inRecords.freaders.Count();fi++){
             mates.push_back(PairedMates()); // setup for finding mates
 
-            outfps.push_back(OutFPs());
+            GStr fname1 = inRecords.freaders[fi]->fname.copy();
+            fname1.append(".tbd");
+            dis.push_back(fname1);
 
-            outfps.back().dup_outfname = inRecords.freaders[fi]->fname.copy();
-            outfps.back().dup_outfname.append(".tbd");
-            outfps.back().dup_outfp = new std::fstream();
-            outfps.back().dup_outfp->open(outfps.back().dup_outfname,std::ios::out | std::ios::binary);
-            if (!outfps.back().dup_outfp->good()) GError("Error creating duplicity index file %s\n",outfps.back().dup_outfname.chars());
-            dis.push_back(Index());
-
-            outfps.back().pair_outfname = inRecords.freaders[fi]->fname.copy();
-            outfps.back().pair_outfname.append(".tbp");
-            outfps.back().pair_outfp = new std::fstream();
-            outfps.back().pair_outfp->open(outfps.back().pair_outfname,std::ios::out | std::ios::binary);
-            if (!outfps.back().pair_outfp->good()) GError("Error creating pairing index file %s\n",outfps.back().pair_outfname.chars());
-            pis.push_back(Index());
+            GStr fname2 = inRecords.freaders[fi]->fname.copy();
+            fname2.append(".tbp");
+            pis.push_back(fname2);
         }
     }
 
@@ -688,7 +707,7 @@ int main(int argc, char *argv[])  {
                     uint32_t offset = mates[irec->fidx].pop_next_valid();
                     if(offset==0) break; // no more valid mates found
 //                    std::cout<<bam_get_qname(brec->get_b())<<std::endl;
-                    pis[irec->fidx].add(offset,outfps[irec->fidx].pair_outfp);
+                    pis[irec->fidx].add(offset);
                 }
             }
         }
@@ -723,12 +742,6 @@ int main(int argc, char *argv[])  {
                 std::cerr<<"mates not empty"<<std::endl;
                 exit(-1);
             }
-
-            dis[i].clear(outfps[i].dup_outfp);
-            delete outfps[i].dup_outfp;
-
-            pis[i].clear(outfps[i].pair_outfp);
-            delete outfps[i].pair_outfp;
         }
     }
 
