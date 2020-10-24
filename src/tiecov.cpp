@@ -3,13 +3,13 @@
 #include "GVec.hh"
 #include "GSam.h"
 
-#define VERSION "0.0.4"
+#define VERSION "0.0.3"
 
 const char* USAGE="TieCov v" VERSION " usage:\n"
-" tiecov [-b out.flt.bam] [-c out.bedgraph] [-j out.junctions.bed] in.bam\n"
-" Other options: \n"
-"  -N   : maximum NH score (if available) to include when reporting coverage\n"
-"  -Q   : minimum mapping quality to include when reporting coverage\n";
+                  " tiecov [-b out.flt.bam] [-c out.bedgraph] [-j out.junctions.bed] in.bam\n"
+                  " Other options: \n"
+                  "  -N   : maximum NH score (if available) to include when reporting coverage\n"
+                  "  -Q   : minimum mapping quality to include when reporting coverage\n";
 
 struct Filters{
     int max_nh = MAX_INT;
