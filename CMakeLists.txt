@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.11)
 project(tiebrush)
 
 set (CMAKE_STATIC_LINKER_FLAGS "-Wl,--as-needed.-lcurl")

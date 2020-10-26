@@ -1,17 +1,12 @@
 #include "GArgs.h"
 #include "GStr.h"
-#include "GVec.hh"
 #include "htslib/sam.h"
 #include "GSam.h"
 #include <set>
-#include <functional>
-#include <iostream>
-#include <map>
 #include <tuple>
 #include <fstream>
 #include <vector>
 #include <algorithm>
-#include <numeric>
 #include <cstring>
 #include <unordered_map>
 
