@@ -3,7 +3,9 @@
 #include <stdlib.h>
 #include <iostream>
 #include <fstream>
+#include <stdio.h>
 
+#include "commons.h"
 #include "GSam.h"
 #include "GArgs.h"
 #include "tmerge.h"
@@ -456,37 +458,54 @@ void init_index_dir(GStr idx_dir){
     }
 }
 
-struct Index{
-public:
-    Index() = default;
-    ~Index() = default;
-
-    void add(uint64_t dupcount,std::fstream* out_fp){
-        buffer[nr*4]   = (dupcount >> 24) & 0xFF;
-        buffer[(nr*4)+1] = (dupcount >> 16) & 0xFF;
-        buffer[(nr*4)+2] = (dupcount >> 8) & 0xFF;
-        buffer[(nr*4)+3] = dupcount & 0xFF;
-
-        nr += 1;
-
-        if(nr*4 == 1024*4096){
-            write(out_fp);
+// given a header to the current collapsed output which contains all samples
+// combine and write a single file where each line describes a different sample
+// samples in the index are preserved in the same order as they appear in the header
+void merge_indices(sam_hdr_t* sam_header,std::ofstream& out_fp){
+    // load sample list
+    std::vector<std::string> sample_info;
+    load_sample_info(sam_header,sample_info);
+    // add .tbd to the names
+    std::vector<long long> sample_idx_bytes; // holds the number of bytes in each sample
+    for(auto& si : sample_info){
+        si.append(".tbd");
+        struct stat buffer;
+        if (stat (si.c_str(), &buffer) != 0){ // make sure the index exists
+            std::cerr<<"could not find .tbd file "<<si<<std::endl;
+            exit(-1);
+        }
+        else{
+            sample_idx_bytes.push_back((long long) buffer.st_size);
         }
     }
-    void clear(std::fstream* out_fp){
-        write(out_fp);
-    }
-private:
-    char buffer[1024*4096];
-    int nr = 0;
 
-    void write(std::fstream* out_fp){
-        out_fp->write(buffer,nr*4);
-        nr=0;
+    // write header with byte counts to each new line
+    long long cur_byte_sum=0;
+    for(int i=0;i<sample_idx_bytes.size();i++){
+        out_fp<<cur_byte_sum<<"|";
+        cur_byte_sum+=sample_idx_bytes[i]+1; // +1 for the newline
     }
-};
+    out_fp.seekp(-1, std::ios_base::end);
+    out_fp<<std::endl;
 
-std::vector<Index> dis;
+    // now take each file and write it to the new output
+    for(auto& si : sample_info){
+        std::ifstream si_fp(si, std::ios_base::binary);
+        out_fp<<si_fp.rdbuf()<<std::endl;
+        si_fp.close();
+    }
+
+
+    // lastly need to remove all temporary indices
+    for(auto& si : sample_info){
+        if( std::remove( si.c_str() ) != 0 ){
+            std::cerr<<"could not delete temporary .tbd file: "<<si<<std::endl;
+            std::cerr<<"continuing operation"<<std::endl;
+        }
+    }
+}
+
+std::vector<Index_Builder> dis;
 
 struct OutFPs{
     std::fstream* dup_outfp;
@@ -544,6 +563,10 @@ bool passes_options(GSamRecord* brec){
     return true;
 }
 
+// TODO: Bzip index
+// TODO: Merging with indexed data
+// TODO: create a python wrapper to make things easier including merging indices, so people don't have to run tiebrush in stages themselves
+
 // >------------------ main() start -----
 int main(int argc, char *argv[])  {
 	inRecords.setup(VERSION, argc, argv);
@@ -565,14 +588,13 @@ int main(int argc, char *argv[])  {
             outfps.back().dup_outfname.append(".tbd");
             outfps.back().dup_outfp = new std::fstream();
             outfps.back().dup_outfp->open(outfps.back().dup_outfname,std::ios::out | std::ios::binary);
-            if (!outfps.back().dup_outfp->good()) GError("Error creating duplicity index file %s\n",outfps.back().dup_outfname.chars());
-            dis.push_back(Index());
+            if (!outfps.back().dup_outfp->good()) {
+                std::cerr << "Error creating duplicity index file: " << outfps.back().dup_outfname.chars() << std::endl;
+                exit(-1);
+            }
+            dis.push_back(Index_Builder());
         }
     }
-
-    // TODO: 1. accept indices through parameters (if fps in header are not valid)
-    //       2. write tiebrush parameters to header
-    //       3. need ability to extend indices when multiple previously collapsed records are collapsed together
 
 	GList<SPData> spdata(true, true, true); //list of Same Position data, with all possibly merged records
 	bool newChr=false;
@@ -601,7 +623,6 @@ int main(int argc, char *argv[])  {
 		 addPData(*irec, spdata);
 	}
     flushPData(spdata);
-	delete outfile;
 	inRecords.stop();
 
     if(options.index){
@@ -609,7 +630,15 @@ int main(int argc, char *argv[])  {
             dis[i].clear(outfps[i].dup_outfp);
             delete outfps[i].dup_outfp;
         }
+        // merge indices into the final output
+        std::string res_idx_fname = outfname.chars();
+        res_idx_fname.append(".tbd");
+        std::ofstream res_idx_fp(res_idx_fname,std::ios_base::binary | std::ios_base::out);
+        merge_indices(outfile->header(),res_idx_fp);
+        res_idx_fp.close();
     }
+
+    delete outfile;
 
     //if (verbose) {
     double p=100.00 - (double)(outCounter*100.00)/(double)inCounter;
@@ -617,6 +646,9 @@ int main(int argc, char *argv[])  {
     //}
 }
 // <------------------ main() end -----
+
+// merging indices can be done as follows:
+// 1. as we parse the alignments from each input - check duplicity for each sample
 
 void processOptions(int argc, char* argv[]) {
     GArgs args(argc, argv, "help;debug;verbose;version;cigar;clip;exon;keep_names;keep_quals;index;CPEKUIDVho:N:Q:");
@@ -676,6 +708,7 @@ void processOptions(int argc, char* argv[]) {
     const char* ifn=NULL;
     while ( (ifn=args.nextNonOpt())!=NULL) {
         //input alignment files
-        inRecords.addFile(ifn);
+        std::string absolute_ifn = get_full_path(ifn);
+        inRecords.addFile(absolute_ifn.c_str());
     }
 }

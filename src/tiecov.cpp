@@ -7,8 +7,10 @@
 #include <string>
 #include <sstream>
 #include <utility>
+#include <fstream>
+#include <set>
 
-
+#include "commons.h"
 #include "GArgs.h"
 #include "GStr.h"
 #include "GVec.hh"
@@ -20,29 +22,35 @@ const char* USAGE="TieCov v" VERSION " usage:\n"
                   " tiecov [-b out.flt.bam] [-s out.sample.bed] [-c out.coverage.bedgraph] [-j out.junctions.bed] in.bam\n"
                   " Otions: \n"
                   "  -b   : bam file after applying filters (-N/-Q)\n"
-                  "  -s   : BED file with number of samples which contain alignments for each interval. Binning of intervals within bundles is controlled by -B\n"
-                  "  -c   : BedGraph file with coverage for all mapped bases. Binning of intervals within bundles is controlled by -B\n"
+                  "  -s   : BED file with number of samples which contain alignments for each interval.\n"
+                  "  -c   : BedGraph file with coverage for all mapped bases.\n"
                   "  -j   : BED file with coverage of all splice-junctions in the input file.\n"
-                  "  -B   : default 1. If set to N - average coverage will be reported for each N bases . If set to 0 - will output average value for each complete bundle\n"
-                  "  -I   : index file or a file containing a list of paths to indices. If provided, only samples corresponding to the indices will be used in the calculations\n"
+                  "  -I   : path to the .tbd index file corresponding to the input BAM/SAM/CRAM file produced by TieBrush\n"
+                  "  -S   : a file with a list of samples. The list is expected to contain absolute paths to the samples. The paths can be extracted from the header of the input file produced by TieBrush identified with @PG\tID:SAMPLE tags.\n"
                   "  -N   : maximum NH score (if available) to include when reporting coverage\n"
                   "  -Q   : minimum mapping quality to include when reporting coverage\n";
 
-// TODO: make sure filetypes are appended correctly (like bedgraph)
+// TODO: index parameter might be wrong - check after re-implementing in tiebrush
+// TODO: coverage threshold (no splice site /coverage data below a threshold)
 
 struct Filters{
     int max_nh = MAX_INT;
     int min_qual = -1;
 } filters;
 
-GStr covfname, jfname, bfname, infname, sfname;
+GStr covfname, jfname, bfname, infname, sfname, spd_fname;
+std::string sample_lst_fname;
 FILE* boutf=NULL;
 FILE* coutf=NULL;
 FILE* joutf=NULL;
 FILE* soutf=NULL;
 
+std::vector<std::string> sample_info; // holds data about samples from the header
+std::vector<int> sample_lst; // if -S provided - this holds the list of samples to extract data from
+
 bool debugMode=false;
 bool verbose=false;
+bool use_index = false; // if set to true - the index will be used
 int juncCount=0;
 
 struct CJunc {
@@ -97,6 +105,37 @@ void flushJuncs(FILE* f, const char* chr) {
 
 void processOptions(int argc, char* argv[]);
 
+void addSamples(GSamRecord& r, std::vector<int>& cur_samples, std::vector<std::set<int>>& bvec, int b_start){ // same as addMean below - but here it computes the actual number of samples when used with an index
+    bam1_t* in_rec=r.get_b();
+    int pos=in_rec->core.pos; // 0-based
+    b_start--; //to make it 0-based
+    for (uint8_t c=0;c<in_rec->core.n_cigar;++c){
+        uint32_t *cigar_full=bam_get_cigar(in_rec);
+        int opcode=bam_cigar_op(cigar_full[c]);
+        int oplen=bam_cigar_oplen(cigar_full[c]);
+        switch(opcode){
+            case BAM_CINS: // no change in coverage and position
+                break;
+            case BAM_CDEL: // skip to the next position - no change in coverage
+                pos+=oplen;
+                break;
+            case BAM_CREF_SKIP: // skip to the next position - no change in coverage
+                pos+=oplen;
+                break;
+            case BAM_CSOFT_CLIP:
+                break;
+            case BAM_CMATCH: // base match - add coverage
+                for(int i=0;i<oplen;i++) {
+                    bvec[pos-b_start].insert(cur_samples.begin(),cur_samples.end()); // add sample ids to the running set
+                    pos++;
+                }
+                break;
+            default:
+                GError("ERROR: unknown opcode: %c from read: %s",bam_cigar_opchr(opcode),bam_get_qname(in_rec));
+        }
+    }
+}
+
 void addMean(GSamRecord& r, int val, std::vector<std::pair<float,uint64_t>>& bvec, int b_start){ // for YX (number of samples) we are not interested in the sum but rather the average number of smaples that describe the position. Giving a heatmap
     bam1_t* in_rec=r.get_b();
     int pos=in_rec->core.pos; // 0-based
@@ -126,6 +165,12 @@ void addMean(GSamRecord& r, int val, std::vector<std::pair<float,uint64_t>>& bve
             default:
                 GError("ERROR: unknown opcode: %c from read: %s",bam_cigar_opchr(opcode),bam_get_qname(in_rec));
         }
+    }
+}
+
+void move2bsam(std::vector<std::set<int>>& bvec_idx,std::vector<std::pair<float,uint64_t>>& bvec){
+    for(int i=0;i<bvec_idx.size();i++){
+        bvec[i].second=bvec_idx[i].size();
     }
 }
 
@@ -190,6 +235,7 @@ void flushCoverage(FILE* outf,sam_hdr_t* hdr, std::vector<std::pair<float,uint64
             j++;
         }
         if (ival!=0)
+//            fprintf(stdout, "%s\t%d\t%d\t%ld\t%f\n", hdr->target_name[tid], b_start+i, b_start+j, (long)ival,hval);
             fprintf(outf, "%s\t%d\t%d\t%ld\t%f\n", hdr->target_name[tid], b_start+i, b_start+j, (long)ival,hval);
         i=j;
     }
@@ -218,72 +264,31 @@ void average(std::vector<uint64_t>& bvec,float thresh){
 }
 
 void normalize(std::vector<std::pair<float,uint64_t>>& bvec,float mint, float maxt, int num_samples){ // normalizes values to a specified range
-    float denom = num_samples-1;
+    float denom = num_samples;
     float mult = (maxt-mint);
 
     for (auto& val : bvec){
-        val.first = ((val.second-1)/denom)*mult+mint;
+        val.first = (val.second/denom)*mult+mint;
     }
 }
 
-bool parse_pg_sample_line(std::string& line){ // returns true if is sample pg line
-    std::stringstream *line_stream = new std::stringstream(line);
-    std::string col;
-
-    // make sure it's PG
-    std::getline(*line_stream,col,'\t');
-    if(std::strcmp(col.c_str(),"@PG")!=0){
-        delete line_stream;
-        return false;
-    }
-
-    // check if ID == SAMPLE
-    std::getline(*line_stream,col,'\t');
-    if(std::strcmp(col.c_str(),"ID:SAMPLE")!=0){
-        delete line_stream;
-        return false;
-    }
-
-    std::getline(*line_stream,col,'\t');
-    std::stringstream *col_stream = new std::stringstream(col);
-    std::string kv;
-    std::getline(*col_stream,kv,':');
-    if(std::strcmp(kv.c_str(),"SP")!=0){
-        delete line_stream;
-        delete col_stream;
-        return false;
-    }
-    std::getline(*col_stream,kv,'\t');
-    line = kv;
-    delete line_stream;
-    delete col_stream;
-    return true;
-}
-
-void load_sample_info(sam_hdr_t* hdr,std::vector<std::string>& info){
-    bool found_sample_line = false;
-    int line_pos = 0;
+void load_sample_list(std::vector<int>& lst,std::string& sl_fname,std::vector<std::string>& sample_info){
+    std::ifstream sl_fp(sl_fname, std::ios_base::binary);
     std::string line;
-    while(true){
-        kstring_t str = KS_INITIALIZE;
-        if (sam_hdr_find_line_pos(hdr, "PG", line_pos, &str)!=0) {
-            if(!found_sample_line){
-                GError("Error: no sample lines found in header");
-            }
-            break;
-        }
-        else{
-            // parse line to check if indeed SAMPLE PG
-            line = std::string(str.s);
-            bool ret = parse_pg_sample_line(line);
-            if(ret){
-                found_sample_line=true;
-                info.push_back(line);
-            }
-            line_pos++;
-        }
-        ks_free(&str);
+    std::set<std::string> sample_lst_set;
+    std::set<std::string>::iterator sl_it;
+    while (sl_fp >> line){
+        sample_lst_set.insert(line);
     }
+
+    for(int i=0;i<sample_info.size();i++){ // find positions in the index to be extracted
+        sl_it = sample_lst_set.find(sample_info[i]);
+        if(sl_it!=sample_lst_set.end()){ // found
+            lst.push_back(i);
+        }
+    }
+
+    sl_fp.close();
 }
 
 // >------------------ main() start -----
@@ -293,10 +298,14 @@ int main(int argc, char *argv[])  {
     //if (hts_file==NULL)
     //   GError("Error: could not open alignment file %s \n",infname.chars());
 	GSamReader samreader(infname.chars(), SAM_QNAME|SAM_FLAG|SAM_RNAME|SAM_POS|SAM_CIGAR|SAM_AUX);
+
     if (!covfname.is_empty()) {
        if (covfname=="-" || covfname=="stdout")
     	   coutf=stdout;
        else {
+           if(std::strcmp(covfname.substr(covfname.length()-9,9).chars(),".bedgraph")!=0){ // if name does not end in .bedgraph
+               covfname.append(".bedgraph");
+           }
           coutf=fopen(covfname.chars(), "w");
           if (coutf==NULL) GError("Error creating file %s\n",
         		  covfname.chars());
@@ -304,86 +313,139 @@ int main(int argc, char *argv[])  {
        }
     }
     if (!jfname.is_empty()) {
+        if(std::strcmp(jfname.substr(jfname.length()-4,4).chars(),".bed")!=0){ // if name does not end in .bed
+            jfname.append(".bed");
+        }
        joutf=fopen(jfname.chars(), "w");
        if (joutf==NULL) GError("Error creating file %s\n",
         		  jfname.chars());
        fprintf(joutf, "track name=junctions\n");
     }
     if (!sfname.is_empty()) {
+        if(std::strcmp(sfname.substr(sfname.length()-9,9).chars(),".bedgraph")!=0){ // if name does not end in .bedgraph
+            sfname.append(".bedgraph");
+        }
         soutf=fopen(sfname.chars(), "w");
         if (soutf==NULL) GError("Error creating file %s\n",
                                 sfname.chars());
         fprintf(soutf, "track type=bedGraph name=\"Sample Count Heatmap\" description=\"Sample Count Heatmap\" visibility=full graphType=\"heatmap\" color=200,100,0 altColor=0,100,200\n");
     }
 
-    // load sample info
-    std::vector<std::string> sample_info;
-    load_sample_info(samreader.header(),sample_info);
+    // initialize the index if requested
+    Index_Loader tie_idx;
+    if(use_index){
+        // load sample info
+        load_sample_info(samreader.header(),sample_info);
+        // load samples list
+        load_sample_list(sample_lst,sample_lst_fname,sample_info);
+        // load all index data
+        tie_idx.load(spd_fname);
+        // initialize streams of the index
+        tie_idx.init(sample_lst);
+    }
 
     int prev_tid=-1;
     GVec<uint64_t> bcov(2048*1024);
     std::vector<std::pair<float,uint64_t>> bsam(2048*1024,{0,1}); // number of samples. 1st - current average; 2nd - total number of values
+    std::vector<std::set<int>> bsam_idx(2048*1024,std::set<int>{}); // for indexed runs
     int b_end=0; //bundle start, end (1-based)
     int b_start=0; //1 based
     GSamRecord brec;
 	while (samreader.next(brec)) {
-		    int nh = brec.tag_int("NH");
-		    if(nh>filters.max_nh)  continue;
-		    if (brec.mapq()<filters.min_qual) continue;
-		    int endpos=brec.end;
-		    if (brec.refId()!=prev_tid || (int)brec.start>b_end) {
-		    	if (coutf) {
-                    flushCoverage(coutf,samreader.header(), bcov, prev_tid, b_start);
+        uint32_t dupcount=0;
+        std::vector<int> cur_samples;
+        if(use_index){
+            tie_idx.next(dupcount,cur_samples); // needs to accept sample numbers
+            if(dupcount==0){ // does not belong to the subset
+                continue;
+            }
+        }
+        int nh = brec.tag_int("NH");
+        if(nh>filters.max_nh)  continue;
+        if (brec.mapq()<filters.min_qual) continue;
+        int endpos=brec.end;
+        if (brec.refId()!=prev_tid || (int)brec.start>b_end) {
+            if (coutf) {
+                flushCoverage(coutf,samreader.header(), bcov, prev_tid, b_start);
+            }
+            if (soutf) {
+                if(use_index){
+                    move2bsam(bsam_idx,bsam);
+                    normalize(bsam,0.1,1.5,sample_lst.size());
                 }
-                if (soutf) {
+                else{
                     discretize(bsam);
                     normalize(bsam,0.1,1.5,sample_info.size());
-                    flushCoverage(soutf,samreader.header(),bsam,prev_tid,b_start);
                 }
-			    if (joutf) {
-                    flushJuncs(joutf, samreader.refName(prev_tid));
-                }
-			    b_start=brec.start;
-			    b_end=endpos;
-			    if (coutf) {
-			        bcov.setCount(0);
-			        bcov.setCount(b_end-b_start+1);
-			    }
-			    if (soutf) {
-			        bsam.clear();
+                flushCoverage(soutf,samreader.header(),bsam,prev_tid,b_start);
+            }
+            if (joutf) {
+                flushJuncs(joutf, samreader.refName(prev_tid));
+            }
+            b_start=brec.start;
+            b_end=endpos;
+            if (coutf) {
+                bcov.setCount(0);
+                bcov.setCount(b_end-b_start+1);
+            }
+            if (soutf) {
+                bsam.clear();
+                bsam.resize(b_end-b_start+1,{0,1});
+                bsam_idx.clear();
+                bsam_idx.resize(b_end-b_start+1,std::set<int>{});
+            }
+            prev_tid=brec.refId();
+        } else { //extending current bundle
+            if (b_end<endpos) {
+                b_end=endpos;
+                bcov.setCount(b_end-b_start+1, (int)0);
+                if (soutf){
                     bsam.resize(b_end-b_start+1,{0,1});
-			    }
-			    prev_tid=brec.refId();
-		    } else { //extending current bundle
-			    if (b_end<endpos) {
-				    b_end=endpos;
-				    bcov.setCount(b_end-b_start+1, (int)0);
-				    if (soutf){
-                        bsam.resize(b_end-b_start+1,{0,1});
-				    }
-			    }
-		    }
-		    int accYC = brec.tag_int("YC", 1);
-		    float accYX = (float)brec.tag_int("YX", 1);
-		    if(coutf){
-		        addCov(brec, accYC, bcov, b_start);
-		    }
-		    if(soutf){
-		        addMean(brec, accYX, bsam, b_start);
-		    }
-		    if (joutf && brec.exons.Count()>1) {
-		    	addJunction(brec, accYC);
-		    }
+                    bsam_idx.resize(b_end-b_start+1,std::set<int>{});
+                }
+            }
+        }
+        int accYC = 0;
+        if(use_index){
+            accYC = dupcount;
+        }
+        else{
+            accYC = brec.tag_int("YC", 1);
+        }
+        if(coutf){
+            addCov(brec, accYC, bcov, b_start);
+        }
+        if (joutf && brec.exons.Count()>1) {
+            addJunction(brec, accYC);
+        }
+
+        if(soutf){
+            if(use_index){
+                addSamples(brec,cur_samples,bsam_idx,b_start);
+            }
+            else{
+                float accYX = 0;
+                accYX = (float)brec.tag_int("YX", 1);
+                addMean(brec, accYX, bsam, b_start);
+            }
+
+        }
 	} //while GSamRecord emitted
 	if (coutf) {
        flushCoverage(coutf,samreader.header(), bcov, prev_tid, b_start);
        if (coutf!=stdout) fclose(coutf);
 	}
 	if (soutf) {
-        discretize(bsam);
-        normalize(bsam,0.1,1.5,sample_info.size());
-	    flushCoverage(soutf,samreader.header(),bsam,prev_tid,b_start);
-	    if (soutf!=stdout) fclose(soutf);
+	    if(use_index){
+            move2bsam(bsam_idx,bsam);
+            normalize(bsam,0.1,1.5,sample_lst.size());
+	    }
+	    else{
+            discretize(bsam);
+            normalize(bsam,0.1,1.5,sample_info.size());
+	    }
+        flushCoverage(soutf,samreader.header(),bsam,prev_tid,b_start);
+        if (soutf!=stdout) fclose(soutf);
 	}
 	if (joutf) {
 		flushJuncs(joutf, samreader.refName(prev_tid));
@@ -393,7 +455,7 @@ int main(int argc, char *argv[])  {
 }// <------------------ main() end -----
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;debug;verbose;version;DVhc:s:j:b:N:Q:");
+    GArgs args(argc, argv, "help;debug;verbose;version;DVhc:s:j:b:N:Q:I:S:");
     args.printError(USAGE, true);
     if (args.getOpt('h') || args.getOpt("help") || args.startNonOpt()==0) {
         GMessage(USAGE);
@@ -430,6 +492,16 @@ void processOptions(int argc, char* argv[]) {
     jfname=args.getOpt('j');
     bfname=args.getOpt('b');
     sfname=args.getOpt('s');
+
+    spd_fname=args.getOpt('I');
+    if (!spd_fname.is_empty()) {
+        use_index=true;
+        sample_lst_fname = args.getOpt('S');
+        if(spd_fname.is_empty()){
+            std::cerr<<"No list of samples provided for use with the index. Running TieCov in default mode"<<std::endl;
+            use_index=false;
+        }
+    }
     if (args.startNonOpt()!=1) GError("Error: no alignment file given!\n");
     infname=args.nextNonOpt();
 }
