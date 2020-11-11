@@ -3,7 +3,7 @@
 
 #include <assert.h>
 #include <string>
-#include <c++/7/iostream>
+#include <iostream>
 #include "GBase.h"
 #include "GList.hh"
 #include "htslib/kstring.h"
