@@ -22,7 +22,6 @@ const char* USAGE="TieBrush v" VERSION " usage:\n"
                   "  --keep_unmap,-M   : keep unmapped reads as well\n"
                   "  --keep_names,-K   : keep names in the original format. if not set - all values will be set incrementally\n"
                   "  --keep_quals,-U   : keep quality strings for the collapsed records. Note that quality strings are randomly chosen if 2 or more records are collapsed\n"
-                  "  --index,-I        : write an index to enable sample extraction from the collapsed output\n"
                   "  -N                : maximum NH score (if available) to include\n"
                   "  -Q                : minimum mapping quality to include\n"
                   "  -F                : will treat all reads with the following flags set as single-end when constructing a pairing index\n";
@@ -41,7 +40,6 @@ struct Options{
     bool keep_quals = false;
     bool keep_unmapped = true;
     bool keep_supplementary = false;
-    bool index = false;
     uint32_t flags = 0;
 } options;
 
@@ -382,11 +380,6 @@ class SPData { // Same Point data
     	if (r->start!=b.r->start) return (r->start<b.r->start);
     	if (tstrand!=b.tstrand) return (tstrand<b.tstrand);
     	if (r->end!=b.r->end) return (r->end<b.r->end);
-        if(options.index) {
-            if ((r->get_b()->core.flag & 0x1) != (b.r->get_b()->core.flag & 0x1)) {
-                return r->get_b()->core.flag & 0x1;
-            }
-        }
     	if (mrgStrategy==tMrgStratFull) {
     		int ret=cmpFull(*r, *(b.r));
     		return (ret<0);
@@ -405,11 +398,6 @@ class SPData { // Same Point data
     	if (r==NULL || b.r==NULL) GError("Error: cannot compare uninitialized SAM records\n");
     	if (r->refId()!=b.r->refId() || r->start!=b.r->start || tstrand!=b.tstrand ||
     			r->end!=b.r->end) return false;
-        if(options.index) {
-            if ((r->get_b()->core.flag & 0x1) != (b.r->get_b()->core.flag & 0x1)) {
-                return false;
-            }
-        }
     	if (mrgStrategy==tMrgStratFull) return (cmpFull(*r, *(b.r))==0);
     	else
     		switch (mrgStrategy) {
@@ -443,76 +431,6 @@ void addPData(TInputRecord& irec, GList<SPData>& spdlst) {
 	newspd->settle(irec); //keep its own SAM record copy
 }
 
-void init_index_dir(GStr idx_dir){
-    struct stat sb;
-    if (stat(idx_dir.chars(), &sb) == 0 && S_ISDIR(sb.st_mode)) {
-        std::cerr<<"index directory already exists"<<std::endl;
-        exit(-1);
-    }
-
-    const int dir_err = mkdir(idx_dir.chars(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
-    if (-1 == dir_err){
-        printf("Error creating index directory\n");
-        exit(1);
-    }
-}
-
-// given a header to the current collapsed output which contains all samples
-// combine and write a single file where each line describes a different sample
-// samples in the index are preserved in the same order as they appear in the header
-void merge_indices(sam_hdr_t* sam_header,std::ofstream& out_fp){
-    // load sample list
-    std::vector<std::string> sample_info;
-    load_sample_info(sam_header,sample_info);
-    // add .tbd to the names
-    std::vector<long long> sample_idx_bytes; // holds the number of bytes in each sample
-    for(auto& si : sample_info){
-        si.append(".tbd");
-        struct stat buffer;
-        if (stat (si.c_str(), &buffer) != 0){ // make sure the index exists
-            std::cerr<<"could not find .tbd file "<<si<<std::endl;
-            exit(-1);
-        }
-        else{
-            sample_idx_bytes.push_back((long long) buffer.st_size);
-        }
-    }
-
-    // write header with byte counts to each new line
-    long long cur_byte_sum=0;
-    for(int i=0;i<sample_idx_bytes.size();i++){
-        out_fp<<cur_byte_sum<<"|";
-        cur_byte_sum+=sample_idx_bytes[i]+1; // +1 for the newline
-    }
-    out_fp.seekp(-1, std::ios_base::end);
-    out_fp<<std::endl;
-
-    // now take each file and write it to the new output
-    for(auto& si : sample_info){
-        std::ifstream si_fp(si, std::ios_base::binary);
-        out_fp<<si_fp.rdbuf()<<std::endl;
-        si_fp.close();
-    }
-
-
-    // lastly need to remove all temporary indices
-    for(auto& si : sample_info){
-        if( std::remove( si.c_str() ) != 0 ){
-            std::cerr<<"could not delete temporary .tbd file: "<<si<<std::endl;
-            std::cerr<<"continuing operation"<<std::endl;
-        }
-    }
-}
-
-std::vector<Index_Builder> dis;
-
-struct OutFPs{
-    std::fstream* dup_outfp;
-    std::fstream* pair_outfp; // Not supported at the moment
-    GStr dup_outfname,pair_outfname;
-};
-std::vector<OutFPs> outfps; // duplicity_out, pair_tmp_out, pair_out
-
 void flushPData(GList<SPData>& spdlst){ //write spdata to outfile
   if (spdlst.Count()==0) return;
   // write SAM records in spdata to outfile
@@ -542,11 +460,7 @@ void flushPData(GList<SPData>& spdlst){ //write spdata to outfile
 	  if (spd.maxYD>0) spd.r->add_int_tag("YD", spd.maxYD);
 	  else spd.r->remove_tag("YD");
 	  outfile->write(spd.r);
-      if(options.index){
-          for(int bidx=0;bidx<spd.samples->size();bidx++){
-              dis[bidx].add(spd.sample_dupcounts[bidx],outfps[bidx].dup_outfp);
-          }
-      }
+
 	  outCounter++;
   }
   spdlst.Clear();
@@ -561,11 +475,6 @@ bool passes_options(GSamRecord* brec){
 
     return true;
 }
-
-// TODO: Bzip index
-// TODO: Merging with indexed data
-// TODO: create a python wrapper to make things easier including merging indices, so people don't have to run tiebrush in stages themselves
-// TODO: merge headers (samples from both inputs if present)
 
 // >------------------ main() start -----
 
@@ -592,22 +501,6 @@ int main(int argc, char *argv[])  {
 	rspacing.init(numSamples);
 	TInputRecord* irec=NULL;
 	GSamRecord* brec=NULL;
-
-    if(options.index){
-        for(int fi=0;fi<inRecords.freaders.Count();fi++){
-            outfps.push_back(OutFPs());
-
-            outfps.back().dup_outfname = inRecords.freaders[fi]->fname.copy();
-            outfps.back().dup_outfname.append(".tbd");
-            outfps.back().dup_outfp = new std::fstream();
-            outfps.back().dup_outfp->open(outfps.back().dup_outfname,std::ios::out | std::ios::binary);
-            if (!outfps.back().dup_outfp->good()) {
-                std::cerr << "Error creating duplicity index file: " << outfps.back().dup_outfname.chars() << std::endl;
-                exit(-1);
-            }
-            dis.push_back(Index_Builder());
-        }
-    }
 
 	GList<SPData> spdata(true, true, true); //list of Same Position data, with all possibly merged records
 	bool newChr=false;
@@ -638,19 +531,6 @@ int main(int argc, char *argv[])  {
     flushPData(spdata);
 	inRecords.stop();
 
-    if(options.index){
-        for(int i=0;i<dis.size();i++){
-            dis[i].clear(outfps[i].dup_outfp);
-            delete outfps[i].dup_outfp;
-        }
-//        // merge indices into the final output
-//        std::string res_idx_fname = outfname.chars();
-//        res_idx_fname.append(".tbd");
-//        std::ofstream res_idx_fp(res_idx_fname,std::ios_base::binary | std::ios_base::out);
-//        merge_indices(outfile->header(),res_idx_fp);
-//        res_idx_fp.close();
-    }
-
     delete outfile;
 
     //if (verbose) {
@@ -661,7 +541,7 @@ int main(int argc, char *argv[])  {
 // <------------------ main() end -----
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;debug;verbose;version;cigar;clip;exon;keep_names;keep_quals;index;CPEKUIDVho:N:Q:");
+    GArgs args(argc, argv, "help;debug;verbose;version;cigar;clip;exon;keep_names;keep_quals;CPEKUDVho:N:Q:");
     args.printError(USAGE, true);
     if (args.getOpt('h') || args.getOpt("help") || args.startNonOpt()==0) {
         GMessage(USAGE);
@@ -689,7 +569,6 @@ void processOptions(int argc, char* argv[]) {
     options.keep_unmapped = (args.getOpt("keep_unmap")!=NULL || args.getOpt("M")!=NULL);
     options.keep_names = (args.getOpt("keep_names")!=NULL || args.getOpt("K")!=NULL);
     options.keep_quals = (args.getOpt("keep_quals")!=NULL || args.getOpt("U")!=NULL);
-    options.index = (args.getOpt("index")!=NULL || args.getOpt("I")!=NULL);
 
     bool stratC=(args.getOpt("cigar")!=NULL || args.getOpt('C')!=NULL);
     bool stratP=(args.getOpt("clip")!=NULL || args.getOpt('P')!=NULL);

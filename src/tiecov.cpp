@@ -24,21 +24,15 @@ const char* USAGE="TieCov v" VERSION " usage:\n"
                   "  -s   : BED file with number of samples which contain alignments for each interval.\n"
                   "  -c   : BedGraph file with coverage for all mapped bases.\n"
                   "  -j   : BED file with coverage of all splice-junctions in the input file.\n"
-                  "  -I   : path to the .tbd index file corresponding to the input BAM/SAM/CRAM file produced by TieBrush\n"
-                  "  -S   : a file with a list of samples. The list is expected to contain absolute paths to the samples. The paths can be extracted from the header of the input file produced by TieBrush identified with @PG\tID:SAMPLE tags.\n"
                   "  -N   : maximum NH score (if available) to include when reporting coverage\n"
                   "  -Q   : minimum mapping quality to include when reporting coverage\n";
-
-// TODO: index parameter might be wrong - check after re-implementing in tiebrush
-// TODO: coverage threshold (no splice site /coverage data below a threshold)
 
 struct Filters{
     int max_nh = MAX_INT;
     int min_qual = -1;
 } filters;
 
-GStr covfname, jfname, bfname, infname, sfname, spd_fname;
-std::string sample_lst_fname;
+GStr covfname, jfname, bfname, infname, sfname;
 FILE* boutf=NULL;
 FILE* coutf=NULL;
 FILE* joutf=NULL;
@@ -49,7 +43,6 @@ std::vector<int> sample_lst; // if -S provided - this holds the list of samples 
 
 bool debugMode=false;
 bool verbose=false;
-bool use_index = false; // if set to true - the index will be used
 int juncCount=0;
 
 struct CJunc {
@@ -330,19 +323,6 @@ int main(int argc, char *argv[])  {
         fprintf(soutf, "track type=bedGraph name=\"Sample Count Heatmap\" description=\"Sample Count Heatmap\" visibility=full graphType=\"heatmap\" color=200,100,0 altColor=0,100,200\n");
     }
 
-    // initialize the index if requested
-    Index_Loader tie_idx;
-    if(use_index){
-        // load sample info
-        load_sample_info(samreader.header(),sample_info);
-        // load samples list
-        load_sample_list(sample_lst,sample_lst_fname,sample_info);
-        // load all index data
-        tie_idx.load(spd_fname);
-        // initialize streams of the index
-        tie_idx.init(sample_lst);
-    }
-
     int prev_tid=-1;
     GVec<uint64_t> bcov(2048*1024);
     std::vector<std::pair<float,uint64_t>> bsam(2048*1024,{0,1}); // number of samples. 1st - current average; 2nd - total number of values
@@ -353,12 +333,6 @@ int main(int argc, char *argv[])  {
 	while (samreader.next(brec)) {
         uint32_t dupcount=0;
         std::vector<int> cur_samples;
-        if(use_index){
-            tie_idx.next(dupcount,cur_samples); // needs to accept sample numbers
-            if(dupcount==0){ // does not belong to the subset
-                continue;
-            }
-        }
         int nh = brec.tag_int("NH");
         if(nh>filters.max_nh)  continue;
         if (brec.mapq()<filters.min_qual) continue;
@@ -368,14 +342,8 @@ int main(int argc, char *argv[])  {
                 flushCoverage(coutf,samreader.header(), bcov, prev_tid, b_start);
             }
             if (soutf) {
-                if(use_index){
-                    move2bsam(bsam_idx,bsam);
-                    normalize(bsam,0.1,1.5,sample_lst.size());
-                }
-                else{
-                    discretize(bsam);
-                    normalize(bsam,0.1,1.5,sample_info.size());
-                }
+                discretize(bsam);
+                normalize(bsam,0.1,1.5,sample_info.size());
                 flushCoverage(soutf,samreader.header(),bsam,prev_tid,b_start);
             }
             if (joutf) {
@@ -405,12 +373,7 @@ int main(int argc, char *argv[])  {
             }
         }
         int accYC = 0;
-        if(use_index){
-            accYC = dupcount;
-        }
-        else{
-            accYC = brec.tag_int("YC", 1);
-        }
+        accYC = brec.tag_int("YC", 1);
         if(coutf){
             addCov(brec, accYC, bcov, b_start);
         }
@@ -419,15 +382,10 @@ int main(int argc, char *argv[])  {
         }
 
         if(soutf){
-            if(use_index){
-                addSamples(brec,cur_samples,bsam_idx,b_start);
-            }
-            else{
-                float accYX = 0;
-                accYX = (float)brec.tag_int("YX", 1);
-                addMean(brec, accYX, bsam, b_start);
-            }
-
+            addSamples(brec,cur_samples,bsam_idx,b_start);
+            float accYX = 0;
+            accYX = (float)brec.tag_int("YX", 1);
+            addMean(brec, accYX, bsam, b_start);
         }
 	} //while GSamRecord emitted
 	if (coutf) {
@@ -435,14 +393,8 @@ int main(int argc, char *argv[])  {
        if (coutf!=stdout) fclose(coutf);
 	}
 	if (soutf) {
-	    if(use_index){
-            move2bsam(bsam_idx,bsam);
-            normalize(bsam,0.1,1.5,sample_lst.size());
-	    }
-	    else{
-            discretize(bsam);
-            normalize(bsam,0.1,1.5,sample_info.size());
-	    }
+        discretize(bsam);
+        normalize(bsam,0.1,1.5,sample_info.size());
         flushCoverage(soutf,samreader.header(),bsam,prev_tid,b_start);
         if (soutf!=stdout) fclose(soutf);
 	}
@@ -454,7 +406,7 @@ int main(int argc, char *argv[])  {
 }// <------------------ main() end -----
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;debug;verbose;version;DVhc:s:j:b:N:Q:I:S:");
+    GArgs args(argc, argv, "help;debug;verbose;version;DVhc:s:j:b:N:Q:");
     args.printError(USAGE, true);
     if (args.getOpt('h') || args.getOpt("help") || args.startNonOpt()==0) {
         GMessage(USAGE);
@@ -492,15 +444,6 @@ void processOptions(int argc, char* argv[]) {
     bfname=args.getOpt('b');
     sfname=args.getOpt('s');
 
-    spd_fname=args.getOpt('I');
-    if (!spd_fname.is_empty()) {
-        use_index=true;
-        sample_lst_fname = args.getOpt('S');
-        if(spd_fname.is_empty()){
-            std::cerr<<"No list of samples provided for use with the index. Running TieCov in default mode"<<std::endl;
-            use_index=false;
-        }
-    }
     if (args.startNonOpt()!=1) GError("Error: no alignment file given!\n");
     infname=args.nextNonOpt();
 }

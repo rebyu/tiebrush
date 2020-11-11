@@ -29,6 +29,7 @@ message(STATUS "gclib binary dir: ${gclib_BINARY_DIR}")
 include_directories(${gclib_SOURCE_DIR})
 
 add_executable(tiebrush src/tiebrush.cpp
+                        src/commons.h
                         src/GSam.cpp
                         src/GSam.h
                         src/tmerge.cpp
@@ -44,6 +45,7 @@ add_dependencies(tiebrush htslib zlib)
 target_link_libraries(tiebrush ${htslib_LIB} ${zlib_LIB} -lbz2 -llzma -pthread -lcrypto -lcurl)
 
 add_executable(tiecov src/tiecov.cpp
+                    src/commons.h
                     src/GSam.cpp
                     src/GSam.h
                     src/tmerge.cpp
@@ -57,33 +59,3 @@ add_executable(tiecov src/tiecov.cpp
 
 add_dependencies(tiecov htslib zlib)
 target_link_libraries(tiecov ${htslib_LIB} ${zlib_LIB} -lbz2 -llzma -pthread -lcrypto -lcurl)
-
-add_executable(untie src/untie.cpp
-                src/GSam.cpp
-                src/GSam.h
-                src/tmerge.cpp
-                src/tmerge.h
-                ${gclib_SOURCE_DIR}/GStr.h
-                ${gclib_SOURCE_DIR}/GStr.cpp
-                ${gclib_SOURCE_DIR}/GArgs.h
-                ${gclib_SOURCE_DIR}/GArgs.cpp
-                ${gclib_SOURCE_DIR}/GBase.h
-                ${gclib_SOURCE_DIR}/GBase.cpp)
-
-add_dependencies(untie htslib zlib)
-target_link_libraries(untie ${htslib_LIB} ${zlib_LIB} -lbz2 -llzma -pthread -lcrypto -lcurl)
-
-add_executable(tieme src/tieme.cpp
-        src/GSam.cpp
-        src/GSam.h
-        src/tmerge.cpp
-        src/tmerge.h
-        ${gclib_SOURCE_DIR}/GStr.h
-        ${gclib_SOURCE_DIR}/GStr.cpp
-        ${gclib_SOURCE_DIR}/GArgs.h
-        ${gclib_SOURCE_DIR}/GArgs.cpp
-        ${gclib_SOURCE_DIR}/GBase.h
-        ${gclib_SOURCE_DIR}/GBase.cpp)
-
-add_dependencies(tieme htslib zlib)
-target_link_libraries(tieme ${htslib_LIB} ${zlib_LIB} -lbz2 -llzma -pthread -lcrypto -lcurl)

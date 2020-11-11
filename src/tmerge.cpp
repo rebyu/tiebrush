@@ -129,7 +129,7 @@ bool TInputFiles::addSam(GSamReader* r, int fidx) {
         }
         // now that we have a full list of samples - we can add them to the header
         for(auto& ls : this->lineno2sample){ // sorted order of the map by line number
-            if(std::get<3>(ls.second)){ // if donor - can skip since already in the header
+            if(this->headerfiletbMerged && std::get<3>(ls.second)){ // if donor - can skip since already in the header
                 continue;
             }
             int res_rg = sam_hdr_add_line(mHdr, "PG", "ID","SAMPLE",
