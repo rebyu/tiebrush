@@ -7,7 +7,6 @@
 #include <string>
 #include <sstream>
 #include <utility>
-#include <fstream>
 #include <set>
 
 #include "commons.h"

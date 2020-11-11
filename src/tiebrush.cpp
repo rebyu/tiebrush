@@ -2,7 +2,6 @@
 #include <cstring>
 #include <stdlib.h>
 #include <iostream>
-#include <fstream>
 #include <stdio.h>
 
 #include "commons.h"
@@ -566,8 +565,22 @@ bool passes_options(GSamRecord* brec){
 // TODO: Bzip index
 // TODO: Merging with indexed data
 // TODO: create a python wrapper to make things easier including merging indices, so people don't have to run tiebrush in stages themselves
+// TODO: merge headers (samples from both inputs if present)
 
 // >------------------ main() start -----
+
+// merging indices can be done as follows:
+// 1. as we parse the alignments from each input - check duplicity for each sample
+// or perhaps it can be a separate method
+// 1. the next index can not have fewer entries - only more
+// 2. so what we need to do is insert 0s where appropriate
+// 3.    everything that is a 0 in a new file is a new 0
+// 4.    everything that is >0 in a new file - is the next old value
+
+// reserve space for a header - always constant, this way we can simply replace values there and not write anything else
+// process indices one by one
+//  1.
+
 int main(int argc, char *argv[])  {
 	inRecords.setup(VERSION, argc, argv);
 	processOptions(argc, argv);
@@ -630,12 +643,12 @@ int main(int argc, char *argv[])  {
             dis[i].clear(outfps[i].dup_outfp);
             delete outfps[i].dup_outfp;
         }
-        // merge indices into the final output
-        std::string res_idx_fname = outfname.chars();
-        res_idx_fname.append(".tbd");
-        std::ofstream res_idx_fp(res_idx_fname,std::ios_base::binary | std::ios_base::out);
-        merge_indices(outfile->header(),res_idx_fp);
-        res_idx_fp.close();
+//        // merge indices into the final output
+//        std::string res_idx_fname = outfname.chars();
+//        res_idx_fname.append(".tbd");
+//        std::ofstream res_idx_fp(res_idx_fname,std::ios_base::binary | std::ios_base::out);
+//        merge_indices(outfile->header(),res_idx_fp);
+//        res_idx_fp.close();
     }
 
     delete outfile;
@@ -646,9 +659,6 @@ int main(int argc, char *argv[])  {
     //}
 }
 // <------------------ main() end -----
-
-// merging indices can be done as follows:
-// 1. as we parse the alignments from each input - check duplicity for each sample
 
 void processOptions(int argc, char* argv[]) {
     GArgs args(argc, argv, "help;debug;verbose;version;cigar;clip;exon;keep_names;keep_quals;index;CPEKUIDVho:N:Q:");

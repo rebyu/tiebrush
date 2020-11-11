@@ -1,4 +1,48 @@
 #include "tmerge.h"
+#include <string>
+#include <sstream>
+#include <stdlib.h>
+#include <cstring>
+
+bool check_id(std::string& line, std::string id_tag){
+    std::stringstream *line_stream = new std::stringstream(line);
+    std::string col;
+
+    // first tag should have already been checked
+    std::getline(*line_stream,col,'\t');
+
+    // check if ID == SAMPLE
+    std::getline(*line_stream,col,'\t');
+    if(strcmp(col.c_str(),id_tag.c_str())!=0){
+        delete line_stream;
+        return false;
+    }
+    delete line_stream;
+    return true;
+}
+
+bool check_id_full(sam_hdr_t *hdr,std::string tag1,std::string tag2){
+    bool found_line = false;
+    int line_pos = 0;
+    std::string line;
+    while(true){
+        kstring_t str = KS_INITIALIZE;
+        if (sam_hdr_find_line_pos(hdr, tag1.c_str(), line_pos, &str)!=0) {
+            break;
+        }
+        else{
+            // parse line to check if tb tag is present
+            line = std::string(str.s);
+            bool ret = check_id(line,tag2.c_str());
+            if(ret){
+                found_line=true;
+            }
+            line_pos++;
+        }
+        ks_free(&str);
+    }
+    return found_line;
+}
 
 void TInputFiles::addFile(const char* fn) {
     GStr sfn(fn);
@@ -31,6 +75,8 @@ bool TInputFiles::addSam(GSamReader* r, int fidx) {
 #endif
     }
     if (mHdr==NULL) { //first file
+        headerfilename = r->fileName();
+        headerfiletbMerged = tb_file;
         mHdr=sam_hdr_dup(r->header());
     }
     else { //check if this file has the same SQ entries in the same order
@@ -59,6 +105,8 @@ bool TInputFiles::addSam(GSamReader* r, int fidx) {
         }
         if (swapHdr) {
             sam_hdr_destroy(mHdr);
+            headerfilename = r->fileName();
+            headerfiletbMerged = tb_file;
             mHdr=sam_hdr_dup(r->header());
         }
     }
@@ -66,15 +114,31 @@ bool TInputFiles::addSam(GSamReader* r, int fidx) {
     ks_free(&str);
     freaders[fidx]->samreader=r;
     freaders[fidx]->tbMerged=tb_file;
-    if (fidx==freaders.Count()-1) { //last samreader entry
+
+    if (fidx==freaders.Count()-1) { // last samreader entry
+        // add any currently existing ID:SAMPLE lines to the maps
+        load_hdr_samples(mHdr,this->headerfilename,this->headerfiletbMerged,true);
+
         for(int fi=0;fi<this->freaders.Count();fi++){ // add metadata about the files being collapsed and the index of each of them
-            int res_rg = sam_hdr_add_line(mHdr, "PG", "ID","SAMPLE",
-                                          "SP",this->freaders[fi]->fname.chars(),
-                                          "XN",GStr(fi).chars(),NULL);
-            if(res_rg==-1){
-                std::cerr<<"unable to complete adding rg tags for file names"<<std::endl;
-                exit(-1);
+            if(std::strcmp(this->freaders[fi]->fname.chars(),this->headerfilename.c_str())==0){ // this is the file which contributed header to the merged result - can safely
+                continue;
             }
+            else{
+                load_hdr_samples(this->freaders[fi]->samreader->header(),this->freaders[fi]->fname.chars(),this->freaders[fi]->tbMerged,false);
+            }
+        }
+        // now that we have a full list of samples - we can add them to the header
+        for(auto& ls : this->lineno2sample){ // sorted order of the map by line number
+            if(std::get<3>(ls.second)){ // if donor - can skip since already in the header
+                continue;
+            }
+            int res_rg = sam_hdr_add_line(mHdr, "PG", "ID","SAMPLE",
+                                              "SP",std::get<0>(ls.second).c_str(),
+                                              "XN",std::get<0>(ls.second).c_str(),NULL);
+                if(res_rg==-1){
+                    std::cerr<<"unable to complete adding pg tags for file names"<<std::endl;
+                    exit(-1);
+                }
         }
         sam_hdr_add_pg(mHdr, "TieBrush",
                        "VN", pg_ver, "CL", pg_args.chars(), NULL);
@@ -83,7 +147,174 @@ bool TInputFiles::addSam(GSamReader* r, int fidx) {
     return tb_file;
 }
 
-int TInputFiles::start() {
+void TInputFiles::load_hdr_samples(sam_hdr_t* hdr,std::string filename,bool tbMerged,bool donor){
+    int sample_line_pos = 0;
+    if(tbMerged){
+        bool found_line = false;
+        int line_pos = 0;
+        std::string line;
+        while(true){
+            kstring_t str = KS_INITIALIZE;
+            if (sam_hdr_find_line_pos(hdr,"PG", line_pos, &str)!=0) {
+                break;
+            }
+            else{
+                line = std::string(str.s);
+                bool ret = get_sample_from_line(line);
+                if(ret){
+                    found_line=true;
+                    this->s2l_it = this->sample2lineno.insert(std::make_pair(line,std::make_tuple(this->max_sample_id,sample_line_pos,filename,donor)));
+                    if(!this->s2l_it.second){ // not inserted
+                        std::cerr<<"duplicate entries detected"<<std::endl;
+                        exit(-1);
+                    }
+                    this->lineno2sample.insert(std::make_pair(this->max_sample_id,std::make_tuple(line,sample_line_pos,filename,donor)));
+                    sample_line_pos++;
+                    this->max_sample_id++;
+                }
+                line_pos++;
+            }
+            ks_free(&str);
+        }
+        if(!found_line){
+            std::cerr<<"Collapsed file does not have any PG:ID:SAMPLE lines in the header"<<std::endl;
+            exit(-1);
+        }
+    }
+    else{ // no sample was found - need to add current name to the header
+        this->s2l_it = this->sample2lineno.insert(std::make_pair(get_full_path(filename),std::make_tuple(this->max_sample_id,sample_line_pos,"",donor)));
+        if(!this->s2l_it.second){ // not inserted
+            std::cerr<<"duplicate entries detected"<<std::endl;
+            exit(-1);
+        }
+        this->lineno2sample.insert(std::make_pair(this->max_sample_id,std::make_tuple(get_full_path(filename),sample_line_pos,"",donor)));
+        sample_line_pos++;
+        this->max_sample_id++;
+    }
+}
+
+std::string TInputFiles::get_full_path(std::string fname){
+    const char *cur_path = fname.c_str();
+    char *actualpath;
+
+
+    actualpath = realpath(cur_path, NULL);
+    if (actualpath != NULL){
+        std::string ret = actualpath;
+        free(actualpath);
+        return ret;
+    }
+    else{
+        std::cerr<<"could not resolve path: "<<fname<<std::endl;
+        exit(-1);
+    }
+}
+
+bool TInputFiles::get_sample_from_line(std::string& line){ // returns true if is sample pg line
+    std::stringstream *line_stream = new std::stringstream(line);
+    std::string col;
+
+    // make sure it's PG
+    std::getline(*line_stream,col,'\t');
+    if(std::strcmp(col.c_str(),"@PG")!=0){
+        delete line_stream;
+        return false;
+    }
+
+    // check if ID == SAMPLE
+    std::getline(*line_stream,col,'\t');
+    if(std::strcmp(col.c_str(),"ID:SAMPLE")!=0){
+        delete line_stream;
+        return false;
+    }
+
+    std::getline(*line_stream,col,'\t');
+    std::stringstream *col_stream = new std::stringstream(col);
+    std::string kv;
+    std::getline(*col_stream,kv,':');
+    if(std::strcmp(kv.c_str(),"SP")!=0){
+        delete line_stream;
+        delete col_stream;
+        return false;
+    }
+    std::getline(*col_stream,kv,'\t');
+    line = kv;
+    delete line_stream;
+    delete col_stream;
+    return true;
+}
+
+// adds a line to the header which tells whether the file has been processed with tiebrush before
+bool TInputFiles::add_tb_tag_if_not_exists(sam_hdr_t *hdr){ // returns true if the tb_tag already existed and false if a new one was created
+    // check if already exists
+    bool found_tb_tag_line = false;
+    int line_pos = 0;
+    std::string line;
+    while(true){
+        kstring_t str = KS_INITIALIZE;
+        if (sam_hdr_find_line_pos(hdr, "PG", line_pos, &str)!=0) {
+            break;
+        }
+        else{
+            // parse line to check if tb tag is present
+            line = std::string(str.s);
+            bool ret = check_id(line,"ID:TB_TAG");
+            if(ret){
+                if(found_tb_tag_line){
+                    std::cerr<<"multiple tb tag lines found"<<std::endl;
+                    exit(-1);
+                }
+                else{
+                    found_tb_tag_line=true;
+                }
+            }
+            line_pos++;
+        }
+        ks_free(&str);
+    }
+    if(!found_tb_tag_line){ // no tb_tag line - can now append the tag line
+        int res_rg = sam_hdr_add_line(mHdr, "PG", "ID","TB_TAG",
+                                      "VL","1",
+                                      "XN","1",NULL);
+        if(res_rg==-1){
+            std::cerr<<"unable to complete adding pg tags for file names"<<std::endl;
+            exit(-1);
+        }
+        return false;
+    }
+    return true;
+}
+
+// removed all lines with matching tags
+void TInputFiles::delete_all_hdr_with_tag(sam_hdr_t *hdr,std::string tag1, std::string tag2){
+    // check if already exists
+    bool found_tb_tag_line = false;
+    int line_pos = 0;
+    std::string line;
+    while(true){
+        kstring_t str = KS_INITIALIZE;
+        if (sam_hdr_find_line_pos(hdr, tag1.c_str(), line_pos, &str)!=0) {
+            break;
+        }
+        else{
+            // parse line to check if tb tag is present
+            line = std::string(str.s);
+            bool ret = check_id(line,tag2.c_str());
+            if(ret){ // found line - remove
+                int ret_rm = sam_hdr_remove_line_pos(hdr,"PG",line_pos);
+                if(ret_rm!=0){
+                    std::cerr<<"could not find requested header line"<<std::endl;
+                    exit(-1);
+                }
+            }
+            line_pos++;
+        }
+        ks_free(&str);
+    }
+}
+
+// todo: merge header PG tags
+int TInputFiles::start(){
     if (this->freaders.Count()==1) {
         //special case, if it's only one file it might be a list of file paths
         GStr& fname= this->freaders.First()->fname;
