@@ -13,7 +13,7 @@ include(ExternalProject)
 ExternalProject_Add(htslib
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/include/htslib/
     BUILD_IN_SOURCE 1
-    CONFIGURE_COMMAND autoheader COMMAND autoconf COMMAND ./configure --without-libdeflate
+    CONFIGURE_COMMAND autoheader COMMAND autoconf COMMAND ./configure --without-libdeflate --disable-libcurl
     BUILD_COMMAND ${MAKE}
     INSTALL_COMMAND ""
 )
@@ -32,20 +32,20 @@ add_executable(tiebrush src/tiebrush.cpp
                         ${CMAKE_SOURCE_DIR}/include/gclib/GBase.cpp)
 
 add_dependencies(tiebrush htslib)
-target_link_libraries(tiebrush -lhts -lz -lbz2 -llzma -pthread -lcrypto -lcurl)
+target_link_libraries(tiebrush -Wl,-Bstatic -lhts -Wl,-Bdynamic -lz -llzma -lbz2 -pthread -Wl,--as-needed) # -lcrypto
 
 add_executable(tiecov src/tiecov.cpp
-                    src/commons.h
-                    src/GSam.cpp
-                    src/GSam.h
-                    src/tmerge.cpp
-                    src/tmerge.h
-                    ${CMAKE_SOURCE_DIR}/include/gclib/GStr.h
-                    ${CMAKE_SOURCE_DIR}/include/gclib/GStr.cpp
-                    ${CMAKE_SOURCE_DIR}/include/gclib/GArgs.h
-                    ${CMAKE_SOURCE_DIR}/include/gclib/GArgs.cpp
-                    ${CMAKE_SOURCE_DIR}/include/gclib/GBase.h
-                    ${CMAKE_SOURCE_DIR}/include/gclib/GBase.cpp)
+                      src/commons.h
+                      src/GSam.cpp
+                      src/GSam.h
+                      src/tmerge.cpp
+                      src/tmerge.h
+                      ${CMAKE_SOURCE_DIR}/include/gclib/GStr.h
+                      ${CMAKE_SOURCE_DIR}/include/gclib/GStr.cpp
+                      ${CMAKE_SOURCE_DIR}/include/gclib/GArgs.h
+                      ${CMAKE_SOURCE_DIR}/include/gclib/GArgs.cpp
+                      ${CMAKE_SOURCE_DIR}/include/gclib/GBase.h
+                      ${CMAKE_SOURCE_DIR}/include/gclib/GBase.cpp)
 
 add_dependencies(tiecov htslib)
-target_link_libraries(tiecov -lhts -lz -lbz2 -llzma -pthread -lcrypto -lcurl)
+target_link_libraries(tiecov -Wl,-Bstatic -lhts -Wl,-Bdynamic -lz -llzma -lbz2 -pthread -Wl,--as-needed) # -lcrypto
