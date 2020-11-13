@@ -24,7 +24,7 @@ const char* USAGE="TieBrush v" VERSION " usage:\n"
                   "  --keep_quals,-U   : keep quality strings for the collapsed records. Note that quality strings are randomly chosen if 2 or more records are collapsed\n"
                   "  -N                : maximum NH score (if available) to include\n"
                   "  -Q                : minimum mapping quality to include\n"
-                  "  -F                : will treat all reads with the following flags set as single-end when constructing a pairing index\n";
+                  "  -F                : bits in SAM flag to use in read comparison\n";
 
 enum TMrgStrategy {
 	tMrgStratFull=0, // same CIGAR and MD
@@ -36,8 +36,6 @@ enum TMrgStrategy {
 struct Options{
     int max_nh = MAX_INT;
     int min_qual = -1;
-    bool keep_names = false;
-    bool keep_quals = false;
     bool keep_unmapped = true;
     bool keep_supplementary = false;
     uint32_t flags = 0;
@@ -222,20 +220,14 @@ struct RDistanceData {
 RDistanceData rspacing;
 
 // check the two reads for compatibility with user provided flags
-// if unmapped or partially mapped pair are to be indexed - cmp function needs to also compare sequences of the two reads to determine whether collapsement is possible
 int cmpFlags(GSamRecord& a, GSamRecord& b){
     if(options.flags == 0){
         return 0;
     }
-    if((options.flags & 0x4) || (options.flags & 0x8)){ // requested indexing unmapped reads in pairs
-        if(a.get_b()->core.flag & 0x4 && b.get_b()->core.flag & 0x4){ // if current read is unpaired - need to compare sequences
-            return std::strcmp(a.sequence(),b.sequence());
-        }
-        else{
-            return -1; // not both reads are unmapped
-        }
+    if((options.flags & a.get_b()->core.flag) == (options.flags & b.get_b()->core.flag)){ // make sure the user-requested flags are the same between reads
+        return 0;
     }
-    return 0;
+    return 1;
 }
 
 int cmpFull(GSamRecord& a, GSamRecord& b) {
@@ -541,7 +533,7 @@ int main(int argc, char *argv[])  {
 // <------------------ main() end -----
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;debug;verbose;version;cigar;clip;exon;keep_names;keep_quals;CPEKUDVho:N:Q:");
+    GArgs args(argc, argv, "help;debug;verbose;version;cigar;clip;exon;CPEDVho:N:Q:");
     args.printError(USAGE, true);
     if (args.getOpt('h') || args.getOpt("help") || args.startNonOpt()==0) {
         GMessage(USAGE);
@@ -567,8 +559,6 @@ void processOptions(int argc, char* argv[]) {
     }
     options.keep_supplementary = (args.getOpt("keep_supp")!=NULL || args.getOpt("S")!=NULL);
     options.keep_unmapped = (args.getOpt("keep_unmap")!=NULL || args.getOpt("M")!=NULL);
-    options.keep_names = (args.getOpt("keep_names")!=NULL || args.getOpt("K")!=NULL);
-    options.keep_quals = (args.getOpt("keep_quals")!=NULL || args.getOpt("U")!=NULL);
 
     bool stratC=(args.getOpt("cigar")!=NULL || args.getOpt('C')!=NULL);
     bool stratP=(args.getOpt("clip")!=NULL || args.getOpt('P')!=NULL);
