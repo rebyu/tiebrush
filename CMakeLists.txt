@@ -49,3 +49,5 @@ add_executable(tiecov src/tiecov.cpp
 
 add_dependencies(tiecov htslib)
 target_link_libraries(tiecov -Wl,-Bstatic -lhts -Wl,-Bdynamic -lz -llzma -lbz2 -pthread -Wl,--as-needed) # -lcrypto
+
+install(TARGETS tiebrush tiecov DESTINATION bin)
