@@ -1,9 +1,9 @@
 TieBrush and TieCov - efficient methods for aggregating and summarizing aligned sequences across large datasets
 ===============================================================================================================
 
-.. image:: https://img.shields.io/badge/License-GPLv3-blue.svg
-    :target: https://opensource.org/licenses/GPL-3.0
-    :alt: GPLv3 License
+.. image:: https://img.shields.io/badge/License-MIT-blue.svg
+    :target: https://opensource.org/licenses/MIT
+    :alt: MIT License
 
 .. contents::
    :local:
