@@ -41,7 +41,7 @@ struct Options{
     uint32_t flags = 0;
 } options;
 
-TMrgStrategy mrgStrategy=tMrgStratFull;
+TMrgStrategy mrgStrategy=tMrgStratCIGAR;
 TInputFiles inRecords;
 
 GStr outfname;
