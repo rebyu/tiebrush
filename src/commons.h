@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <fstream>
 
-#include "GStr.h"
+#include <gclib/GStr.h>
 #include "GSam.h"
 
 #ifndef TIEBRUSH_COMMONS_H

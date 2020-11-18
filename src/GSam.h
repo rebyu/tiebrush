@@ -4,11 +4,11 @@
 #include <assert.h>
 #include <string>
 #include <iostream>
-#include "GBase.h"
-#include "GList.hh"
-#include "htslib/kstring.h"
-#include "htslib/sam.h"
-#include "htslib/cram.h"
+#include <gclib/GBase.h>
+#include <gclib/GList.hh>
+#include <htslib/htslib/kstring.h>
+#include <htslib/htslib/sam.h>
+#include <htslib/htslib/cram.h>
 
 class GSamReader;
 class GSamWriter;

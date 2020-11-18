@@ -6,9 +6,9 @@
 
 #include "commons.h"
 #include "GSam.h"
-#include "GArgs.h"
+#include <gclib/GArgs.h>
 #include "tmerge.h"
-#include "GBitVec.h"
+#include <gclib/GBitVec.h>
 
 #define VERSION "0.0.5"
 

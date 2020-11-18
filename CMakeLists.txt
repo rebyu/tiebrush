@@ -1,12 +1,13 @@
 cmake_minimum_required(VERSION 2.8)
 project(tiebrush)
 
-set (CMAKE_STATIC_LINKER_FLAGS "-Wl,--as-needed.-lcurl")
+# set (CMAKE_STATIC_LINKER_FLAGS "-Wl,--as-needed.-lcurl")
 
 set(CMAKE_CXX_STANDARD 11)
 
-include_directories("${CMAKE_SOURCE_DIR}/include/gclib/")
-include_directories("${CMAKE_SOURCE_DIR}/include/htslib/")
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive -DNOCURL=1")
+
+include_directories("${CMAKE_SOURCE_DIR}/include/")
 link_directories("${CMAKE_SOURCE_DIR}/include/htslib")
 
 include(ExternalProject)
@@ -17,6 +18,13 @@ ExternalProject_Add(htslib
     BUILD_COMMAND ${MAKE}
     INSTALL_COMMAND ""
 )
+
+# ExternalProject_Add(libBigWig
+#     SOURCE_DIR ${CMAKE_SOURCE_DIR}/include/libBigWig/
+#     BUILD_IN_SOURCE 1
+#     BUILD_COMMAND ${MAKE}
+#     INSTALL_COMMAND ""
+# )
 
 add_executable(tiebrush src/tiebrush.cpp
                         src/commons.h
@@ -48,6 +56,7 @@ add_executable(tiecov src/tiecov.cpp
                       ${CMAKE_SOURCE_DIR}/include/gclib/GBase.cpp)
 
 add_dependencies(tiecov htslib)
-target_link_libraries(tiecov -Wl,-Bstatic -lhts -Wl,-Bdynamic -lz -llzma -lbz2 -pthread -Wl,--as-needed) # -lcrypto
+# add_dependencies(tiecov libBigWig)
+target_link_libraries(tiecov -Wl,-Bstatic -lhts -Wl,-Bdynamic -lz -llzma -lbz2 -pthread -Wl,--as-needed) # -lBigWig -lcrypto
 
 install(TARGETS tiebrush tiecov DESTINATION bin)

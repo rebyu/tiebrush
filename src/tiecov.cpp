@@ -10,10 +10,15 @@
 #include <set>
 
 #include "commons.h"
-#include "GArgs.h"
-#include "GStr.h"
-#include "GVec.hh"
+#include <gclib/GArgs.h>
+#include <gclib/GStr.h>
+#include <gclib/GVec.hh>
 #include "GSam.h"
+#include <libBigWig/bigWig.h>
+#include <libBigWig/bwRead.c>
+#include <libBigWig/bwValues.c>
+#include <libBigWig/bwWrite.c>
+#include <libBigWig/io.c>
 
 #define VERSION "0.0.5"
 
@@ -25,7 +30,8 @@ const char* USAGE="TieCov v" VERSION " usage:\n"
                   "  -c   : BedGraph file with coverage for all mapped bases.\n"
                   "  -j   : BED file with coverage of all splice-junctions in the input file.\n"
                   "  -N   : maximum NH score (if available) to include when reporting coverage\n"
-                  "  -Q   : minimum mapping quality to include when reporting coverage\n";
+                  "  -Q   : minimum mapping quality to include when reporting coverage\n"
+                  "  -W   : save output in BigWig format. Default output is in Bed and BedGraph formats";
 
 struct Filters{
     int max_nh = MAX_INT;
@@ -38,11 +44,17 @@ FILE* coutf=NULL;
 FILE* joutf=NULL;
 FILE* soutf=NULL;
 
+GStr covfname_bw, jfname_bw, sfname_bw;
+bigWigFile_t *coutf_bw = NULL;
+bigWigFile_t *joutf_bw = NULL;
+bigWigFile_t *soutf_bw = NULL;
+
 std::vector<std::string> sample_info; // holds data about samples from the header
 std::vector<int> sample_lst; // if -S provided - this holds the list of samples to extract data from
 
 bool debugMode=false;
 bool verbose=false;
+bool bigwig=false;
 int juncCount=0;
 
 struct CJunc {
@@ -209,10 +221,45 @@ void flushCoverage(FILE* outf,sam_hdr_t* hdr, GVec<uint64_t>& bvec,  int tid, in
      while (j<bvec.Count() && ival==bvec[j]) {
     	 j++;
      }
-     if (ival!=0)
-       fprintf(outf, "%s\t%d\t%d\t%ld\n", hdr->target_name[tid], b_start+i, b_start+j, (long)ival);
+     if (ival!=0){
+         fprintf(outf, "%s\t%d\t%d\t%ld\n", hdr->target_name[tid], b_start+i, b_start+j, (long)ival);
+     }
      i=j;
   }
+}
+
+void flushCoverage(bigWigFile_t* outf,sam_hdr_t* hdr, GVec<uint64_t>& bvec,  int tid, int b_start) {
+    if (tid<0 || b_start<=0) return;
+    int i=0;
+    b_start--; //to make it 0-based;
+    bool first = true;
+    while (i<bvec.Count()) {
+        uint64_t ival=bvec[i];
+        int j=i+1;
+        while (j<bvec.Count() && ival==bvec[j]) {
+            j++;
+        }
+        if (ival!=0){
+            char *chromsUse[] = {hdr->target_name[tid]};
+            uint32_t bw_start[] = {(uint32_t)b_start+i};
+            uint32_t bw_end[] = {(uint32_t)b_start+j};
+            float values[] = {(float)ival};
+            if(first){
+                if(bwAddIntervals(outf, chromsUse, bw_start, bw_end,values, 1)){
+                    std::cerr<<"error bw"<<std::endl;
+                    exit(-1);
+                }
+                first=false;
+            }
+            else{
+                if(bwAppendIntervals(outf, bw_start, bw_end,values, 1)){
+                    std::cerr<<"error bw"<<std::endl;
+                    exit(-1);
+                }
+            }
+        }
+        i=j;
+    }
 }
 
 void flushCoverage(FILE* outf,sam_hdr_t* hdr, std::vector<std::pair<float,uint64_t>>& bvec,  int tid, int b_start) {
@@ -227,7 +274,6 @@ void flushCoverage(FILE* outf,sam_hdr_t* hdr, std::vector<std::pair<float,uint64
             j++;
         }
         if (ival!=0)
-//            fprintf(stdout, "%s\t%d\t%d\t%ld\t%f\n", hdr->target_name[tid], b_start+i, b_start+j, (long)ival,hval);
             fprintf(outf, "%s\t%d\t%d\t%ld\t%f\n", hdr->target_name[tid], b_start+i, b_start+j, (long)ival,hval);
         i=j;
     }
@@ -240,7 +286,7 @@ void discretize(std::vector<std::pair<float,uint64_t>>& bvec1){
     }
 }
 
-void average(std::vector<uint64_t>& bvec,float thresh){
+void average_sample(std::vector<uint64_t>& bvec,float thresh){
     // iterate
     // find min and max of the range of values
     // find percentage by which values can be similar to group together
@@ -285,7 +331,7 @@ void load_sample_list(std::vector<int>& lst,std::string& sl_fname,std::vector<st
 
 // >------------------ main() start -----
 int main(int argc, char *argv[])  {
-	processOptions(argc, argv);
+    processOptions(argc, argv);
     //htsFile* hts_file=hts_open(infname.chars(), "r");
     //if (hts_file==NULL)
     //   GError("Error: could not open alignment file %s \n",infname.chars());
@@ -295,13 +341,53 @@ int main(int argc, char *argv[])  {
        if (covfname=="-" || covfname=="stdout")
     	   coutf=stdout;
        else {
-           if(std::strcmp(covfname.substr(covfname.length()-9,9).chars(),".bedgraph")!=0){ // if name does not end in .bedgraph
-               covfname.append(".bedgraph");
+           if(!bigwig){
+               if(std::strcmp(covfname.substr(covfname.length()-9,9).chars(),".bedgraph")!=0){ // if name does not end in .bedgraph
+                   covfname.append(".bedgraph");
+               }
+               coutf=fopen(covfname.chars(), "w");
+               if (coutf==NULL) GError("Error creating file %s\n",
+                                       covfname.chars());
+               fprintf(coutf, "track type=bedGraph\n");
            }
-          coutf=fopen(covfname.chars(), "w");
-          if (coutf==NULL) GError("Error creating file %s\n",
-        		  covfname.chars());
-          fprintf(coutf, "track type=bedGraph\n");
+           else{ // initialize bigwig
+               if(std::strcmp(covfname_bw.substr(covfname_bw.length()-7,7).chars(),".bigwig")!=0){ // if name does not end in .bigwig
+                   covfname_bw.append(".bigwig");
+               }
+               if(bwInit(1<<17) != 0) {
+                   fprintf(stderr, "Received an error in bwInit\n");
+                   return 1;
+               }
+               coutf_bw = bwOpen((char*)covfname_bw.chars(), NULL, "w");
+               if(!coutf_bw) {
+                   fprintf(stderr, "An error occurred while opening example_output.bw for writing\n");
+                   return 1;
+               }
+               //Allow up to 10 zoom levels, though fewer will be used in practice
+               if(bwCreateHdr(coutf_bw, 10)){
+                   std::cerr<<"error bw"<<std::endl;
+                   exit(-1);
+               }
+               //Create the chromosome lists
+               // need to get from htslib
+               char *chroms[samreader.header()->n_targets];
+               uint32_t lens[samreader.header()->n_targets];
+               for(int bwi=0;bwi<samreader.header()->n_targets;bwi++){
+                   chroms[bwi] = samreader.header()->target_name[bwi];
+                   lens[bwi] = samreader.header()->target_len[bwi];
+               }
+               coutf_bw->cl = bwCreateChromList(chroms, lens, samreader.header()->n_targets);
+               if(!coutf_bw->cl){
+                   std::cerr<<"error bw"<<std::endl;
+                   exit(-1);
+               }
+
+               //Write the header
+               if(bwWriteHdr(coutf_bw)){
+                   std::cerr<<"error bw"<<std::endl;
+                   exit(-1);
+               }
+           }
        }
     }
     if (!jfname.is_empty()) {
@@ -341,6 +427,9 @@ int main(int argc, char *argv[])  {
             if (coutf) {
                 flushCoverage(coutf,samreader.header(), bcov, prev_tid, b_start);
             }
+            if(coutf_bw){
+                flushCoverage(coutf_bw,samreader.header(), bcov, prev_tid, b_start);
+            }
             if (soutf) {
                 discretize(bsam);
                 normalize(bsam,0.1,1.5,sample_info.size());
@@ -351,7 +440,7 @@ int main(int argc, char *argv[])  {
             }
             b_start=brec.start;
             b_end=endpos;
-            if (coutf) {
+            if (coutf || coutf_bw) {
                 bcov.setCount(0);
                 bcov.setCount(b_end-b_start+1);
             }
@@ -374,7 +463,7 @@ int main(int argc, char *argv[])  {
         }
         int accYC = 0;
         accYC = brec.tag_int("YC", 1);
-        if(coutf){
+        if(coutf || coutf_bw){
             addCov(brec, accYC, bcov, b_start);
         }
         if (joutf && brec.exons.Count()>1) {
@@ -403,10 +492,25 @@ int main(int argc, char *argv[])  {
 		fclose(joutf);
 	}
 
+	// same for BigWig
+    if (coutf_bw) {
+        flushCoverage(coutf_bw,samreader.header(), bcov, prev_tid, b_start);
+        bwClose(coutf_bw);
+        bwCleanup();
+    }
+    if (soutf_bw) {
+        bwClose(soutf_bw);
+        bwCleanup();
+    }
+    if (joutf_bw) {
+        bwClose(joutf_bw);
+        bwCleanup();
+    }
+
 }// <------------------ main() end -----
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;debug;verbose;version;DVhc:s:j:b:N:Q:");
+    GArgs args(argc, argv, "help;debug;verbose;version;DVWhc:s:j:b:N:Q:");
     args.printError(USAGE, true);
     if (args.getOpt('h') || args.getOpt("help") || args.startNonOpt()==0) {
         GMessage(USAGE);
@@ -429,6 +533,7 @@ void processOptions(int argc, char* argv[]) {
 
     debugMode=(args.getOpt("debug")!=NULL || args.getOpt('D')!=NULL);
     verbose=(args.getOpt("verbose")!=NULL || args.getOpt('V')!=NULL);
+    bigwig=args.getOpt('W')!=NULL;
 
     if (args.getOpt("version")) {
         fprintf(stdout,"%s\n", VERSION);
@@ -443,6 +548,10 @@ void processOptions(int argc, char* argv[]) {
     jfname=args.getOpt('j');
     bfname=args.getOpt('b');
     sfname=args.getOpt('s');
+
+    covfname_bw=args.getOpt('c');
+    jfname_bw=args.getOpt('j');
+    sfname_bw=args.getOpt('s');
 
     if (args.startNonOpt()!=1) GError("Error: no alignment file given!\n");
     infname=args.nextNonOpt();

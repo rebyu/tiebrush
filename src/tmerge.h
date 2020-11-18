@@ -2,12 +2,12 @@
 #define TIEBRUSH_TMERGE_H_
 
 #include <map>
-#include "GStr.h"
-#include "GVec.hh"
-#include "GList.hh"
+#include <gclib/GStr.h>
+#include <gclib/GVec.hh>
+#include <gclib/GList.hh>
 //#include "rlink.h"
 #include "GSam.h"
-#include "htslib/khash.h"
+#include <htslib/htslib/khash.h>
 
 struct TSamReader {
 	GStr fname;
