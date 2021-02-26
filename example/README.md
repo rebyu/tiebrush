@@ -29,6 +29,7 @@ NEFL (chr8:24,950,955-24,956,721 (GRCh38/hg38)) neurofilament-coding gene is kno
 Brain, however low expression are typically observed in several cell types in the heart.
 
 ![](https://github.com/alevar/tiebrush/blob/master/example/nefl.sim.png)
+
 **Figure 1.** *Comparison of transcription of the NEFL gene in brain (top) and 
 heart (bottom) tissues from the simulated dataset. Each tissue is represented by 
 three tracks produced by TieCov: read coverage (top), percent of samples containing the 
@@ -37,9 +38,10 @@ prevalence and expression of the gene in brain tissue*
 
 SLC25A3 (chr12:98,593,591-98,606,379 (GRCh38/hg38)) can be expressed by several dominant
 alternative isoforms, with splicing patterns being known to be tissue specific. In case of 
-cells from heart and brain - alternative forms used differ in the third exon.
+cells from heart and brain - alternative forms used differ in the third exon [1].
 
 ![](https://github.com/alevar/tiebrush/blob/master/example/slc25a3.sim.png)
+
 **Figure 2.** *Comparison of transcription of the SLC25A3 gene in brain (top) 
 and heart (bottom) tissues from the simulated dataset. While the gene is expressed 
 in both tissues, coverage data clearly indicate an exon switch where the 3rd and 
@@ -47,14 +49,15 @@ in both tissues, coverage data clearly indicate an exon switch where the 3rd and
 
 ## Simulation Protocol
 1. 10 samples were randomly selected from brain tissue and another 10 samples were randomly selected 
-from the heart tissue of the GTEx project (Table 1). 
-2. Samples were aligned with HISAT2 against the GRCh.38(patch 12).
-3. Transcriptomes for each sample were individually assembled and quantified using StringTie2.
-4. Using GffCompare samples were individually compared against the RefSeq annotation
+from the heart tissue of the GTEx project [2] (Table 1). 
+2. Samples were aligned with HISAT2 [3] against the GRCh.38(patch 12) [4].
+3. Transcriptomes for each sample were individually assembled and quantified using StringTie2 [5].
+4. Using GffCompare [6] samples were individually compared against the RefSeq annotation [7].
 5. Transcript structures (GTF) and coverage data of isoforms overlapping the NEFL and SLC25A3 genes 
    were extracted for each sample.
-6. Extracted GTF and coverage data were used to simulate reads using polyester.
-7. Fasta files produced by polyester were directly converted into SAM format using sim2sam utility.
+7. Extracted transcriptome (FASTA sequences obtained with gffread [6]) and coverage data 
+   were used to simulate 101bp reads using polyester [8].
+8. Fasta files produced by polyester were directly converted into SAM format using sim2sam utility [9].
 
 | Brain Samples | Heart Samples |
 |---------------|:--------------|
@@ -68,4 +71,24 @@ from the heart tissue of the GTEx project (Table 1).
 |SRR814989   	| SRR1352213    |
 |SRR817658   	| SRR1435584    |
 |SRR818146   	| SRR1345736    |
+
 **Table 1.** *GTEx samples used to model parameters for the simulation*
+
+## References
+[1] Wang, Eric T., et al. "Alternative isoform regulation in human tissue transcriptomes." Nature 456.7221 (2008): 470-476.
+
+[2] Lonsdale, John, et al. "The genotype-tissue expression (GTEx) project." Nature genetics 45.6 (2013): 580-585.
+
+[3] Kim, Daehwan, et al. "Graph-based genome alignment and genotyping with HISAT2 and HISAT-genotype." Nature biotechnology 37.8 (2019): 907-915.
+
+[4] Schneider, Valerie A., et al. "Evaluation of GRCh38 and de novo haploid genome assemblies demonstrates the enduring quality of the reference assembly." Genome research 27.5 (2017): 849-864.
+
+[5] Kovaka, Sam, et al. "Transcriptome assembly from long-read RNA-seq alignments with StringTie2." Genome biology 20.1 (2019): 1-13.
+
+[6] Pertea, Geo, and Mihaela Pertea. "GFF utilities: GffRead and GffCompare." F1000Research 9 (2020).
+
+[7] O'Leary, Nuala A., et al. "Reference sequence (RefSeq) database at NCBI: current status, taxonomic expansion, and functional annotation." Nucleic acids research 44.D1 (2016): D733-D745.
+
+[8] Frazee, Alyssa C., et al. "Polyester: simulating RNA-seq datasets with differential transcript expression." Bioinformatics 31.17 (2015): 2778-2784.
+
+[9] Varabyou, Ales, Steven L. Salzberg, and Mihaela Pertea. "Effects of transcriptional noise on estimates of gene and transcript expression in RNA sequencing experiments." Genome Research 31.2 (2021): 301-308.
