@@ -19,12 +19,16 @@ ExternalProject_Add(htslib
     INSTALL_COMMAND ""
 )
 
-# ExternalProject_Add(libBigWig
-#     SOURCE_DIR ${CMAKE_SOURCE_DIR}/include/libBigWig/
-#     BUILD_IN_SOURCE 1
-#     BUILD_COMMAND ${MAKE}
-#     INSTALL_COMMAND ""
-# )
+ExternalProject_Add(libBigWig
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/include/libBigWig/
+    BUILD_ALWAYS 1
+    BUILD_IN_SOURCE 1
+    CONFIGURE_COMMAND ""
+    BUILD_COMMAND make
+    INSTALL_COMMAND ""
+)
+
+find_library(LBW_LIB BigWig "${CMAKE_SOURCE_DIR}/include/libBigWig")
 
 add_executable(tiebrush src/tiebrush.cpp
                         src/commons.h
@@ -56,7 +60,6 @@ add_executable(tiecov src/tiecov.cpp
                       ${CMAKE_SOURCE_DIR}/include/gclib/GBase.cpp)
 
 add_dependencies(tiecov htslib)
-# add_dependencies(tiecov libBigWig)
-target_link_libraries(tiecov -Wl,-Bstatic -lhts -Wl,-Bdynamic -lz -llzma -lbz2 -pthread -Wl,--as-needed) # -lBigWig -lcrypto
+target_link_libraries(tiecov ${LBW_LIB} -Wl,-Bstatic -lhts -Wl,-Bdynamic -lz -llzma -lbz2 -pthread -Wl,--as-needed) # -lBigWig -lcrypto
 
 install(TARGETS tiebrush tiecov DESTINATION bin)
