@@ -5,7 +5,6 @@
 #include <cstring>
 #include <iostream>
 #include <string>
-#include <sstream>
 #include <utility>
 #include <set>
 
@@ -15,10 +14,6 @@
 #include <gclib/GVec.hh>
 #include "GSam.h"
 #include <libBigWig/bigWig.h>
-#include <libBigWig/bwRead.c>
-#include <libBigWig/bwValues.c>
-#include <libBigWig/bwWrite.c>
-#include <libBigWig/io.c>
 
 #define VERSION "0.0.5"
 
@@ -31,7 +26,7 @@ const char* USAGE="TieCov v" VERSION " usage:\n"
                   "  -j   : BED file with coverage of all splice-junctions in the input file.\n"
                   "  -N   : maximum NH score (if available) to include when reporting coverage\n"
                   "  -Q   : minimum mapping quality to include when reporting coverage\n"
-                  "  -W   : save output in BigWig format. Default output is in Bed and BedGraph formats";
+                  "  -W   : save output in BigWig format. Default output is in Bed and BedGraph formats\n";
 
 struct Filters{
     int max_nh = MAX_INT;

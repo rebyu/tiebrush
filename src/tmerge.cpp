@@ -132,11 +132,9 @@ bool TInputFiles::addSam(GSamReader* r, int fidx) {
             if(this->headerfiletbMerged && std::get<3>(ls.second)){ // if donor - can skip since already in the header
                 continue;
             }
-            int res_rg = sam_hdr_add_line(mHdr, "PG", "ID","SAMPLE",
-                                              "SP",std::get<0>(ls.second).c_str(),
-                                              "XN",std::get<0>(ls.second).c_str(),NULL);
+            int res_rg = sam_hdr_add_line(mHdr, "CO", ("SAMPLE:"+std::get<0>(ls.second)).c_str(),NULL);
                 if(res_rg==-1){
-                    std::cerr<<"unable to complete adding pg tags for file names"<<std::endl;
+                    std::cerr<<"unable to complete adding CO tags for file names"<<std::endl;
                     exit(-1);
                 }
         }
@@ -155,7 +153,7 @@ void TInputFiles::load_hdr_samples(sam_hdr_t* hdr,std::string filename,bool tbMe
         std::string line;
         while(true){
             kstring_t str = KS_INITIALIZE;
-            if (sam_hdr_find_line_pos(hdr,"PG", line_pos, &str)!=0) {
+            if (sam_hdr_find_line_pos(hdr,"CO", line_pos, &str)!=0) {
                 break;
             }
             else{
@@ -177,7 +175,7 @@ void TInputFiles::load_hdr_samples(sam_hdr_t* hdr,std::string filename,bool tbMe
             ks_free(&str);
         }
         if(!found_line){
-            std::cerr<<"Collapsed file does not have any PG:ID:SAMPLE lines in the header"<<std::endl;
+            std::cerr<<"Collapsed file does not have any CO: lines in the header"<<std::endl;
             exit(-1);
         }
     }
@@ -214,33 +212,23 @@ bool TInputFiles::get_sample_from_line(std::string& line){ // returns true if is
     std::stringstream *line_stream = new std::stringstream(line);
     std::string col;
 
-    // make sure it's PG
+    // make sure it's CO - comment line
     std::getline(*line_stream,col,'\t');
-    if(std::strcmp(col.c_str(),"@PG")!=0){
+    if(std::strcmp(col.c_str(),"@CO")!=0){
         delete line_stream;
         return false;
     }
 
     // check if ID == SAMPLE
-    std::getline(*line_stream,col,'\t');
-    if(std::strcmp(col.c_str(),"ID:SAMPLE")!=0){
+    std::getline(*line_stream,col,':');
+    if(std::strcmp(col.c_str(),"SAMPLE")!=0){
         delete line_stream;
         return false;
     }
 
     std::getline(*line_stream,col,'\t');
-    std::stringstream *col_stream = new std::stringstream(col);
-    std::string kv;
-    std::getline(*col_stream,kv,':');
-    if(std::strcmp(kv.c_str(),"SP")!=0){
-        delete line_stream;
-        delete col_stream;
-        return false;
-    }
-    std::getline(*col_stream,kv,'\t');
-    line = kv;
+    line = col;
     delete line_stream;
-    delete col_stream;
     return true;
 }
 

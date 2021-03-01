@@ -24,7 +24,15 @@ const char* USAGE="TieBrush v" VERSION " usage:\n"
                   "  --keep_quals,-U   : keep quality strings for the collapsed records. Note that quality strings are randomly chosen if 2 or more records are collapsed\n"
                   "  -N                : maximum NH score (if available) to include\n"
                   "  -Q                : minimum mapping quality to include\n"
-                  "  -F                : bits in SAM flag to use in read comparison\n";
+                  "  -F                : bits in SAM flag to use in read comparison\n"
+                  "  --consensus,-c    : enable consensus mode. If \n";
+
+// 1. add mode to select representative alignment
+// 2. add mode to select consensus sequence
+// 3. add mode (current) - random read selection
+// 4. replace options with argparse?
+// 5. in the help indicate what options are default
+// 6. fix PG/RG sample confusion
 
 enum TMrgStrategy {
 	tMrgStratFull=0, // same CIGAR and MD
@@ -305,12 +313,15 @@ class SPData { // Same Point data
 	                 //number of bits set will be stored as YX:i:(samples.count()+accYX)
     std::vector<uint64_t> sample_dupcounts; // within each sample how many records were collapsed
                                             // number of bits set will be stored as YX:i:(samples.count()+accYX)
+    std::vector<uint8_t> vars; // variants observed - used in consensus sequence generation
+    bool consensus_mode = false; // if set to true - will compute consensus for each SPData
+    void set_consensus_mode(bool mode){consensus_mode=mode;}
 	int dupCount; //duplicity count - how many single-alignments were merged into r
 	              // will be stored as tag YC:i:(dupCount+accYC)
 	GSamRecord* r;
 	char tstrand; //'-','+' or '.'
     SPData(GSamRecord* rec=NULL):settled(false), accYC(0), accYX(0), maxYD(0),samples(NULL),
-    		dupCount(0), r(rec), tstrand('.') {
+    		dupCount(0), r(rec), tstrand('.'), consensus_mode(false) {
     	if (r!=NULL) tstrand=r->spliceStrand();
     }
 
@@ -411,6 +422,11 @@ void addPData(TInputRecord& irec, GList<SPData>& spdlst) {
 		//find if irec can merge into existing SPData
 		SPData* spf=spdlst.AddIfNew(newspd, false);
 		if (spf!=newspd) { //matches existing SP entry spf, merge
+		    // TODO: consensus can be collected in dupAdd by remembering all MD data
+		    //   initiate array of length (sequence) and store most common base
+		    //   - use raw seq data in the record (already array)
+		    //   - bit operations?
+		    //     - write a separate function for this - that way can implement a simple approach first (plain iteration) and then improve it
 			spf->dupAdd(irec); //update existing SP entry
 			delete newspd;
 			return;
@@ -571,13 +587,16 @@ void processOptions(int argc, char* argv[]) {
         else mrgStrategy=tMrgStratExon;
     }
 
+    bool consensus_mode = (args.getOpt("consensus")!=NULL || args.getOpt('c')!=NULL);
+    // TODO: set the mode
+
     debugMode=(args.getOpt("debug")!=NULL || args.getOpt('D')!=NULL);
     verbose=(args.getOpt("verbose")!=NULL || args.getOpt('V')!=NULL);
     if (args.getOpt("version")) {
         fprintf(stdout,"%s\n", VERSION);
         exit(0);
     }
-    //verbose=(args.getOpt('v')!=NULL);
+    verbose=(args.getOpt('v')!=NULL);
     if (verbose) {
         fprintf(stderr, "Running TieBrush " VERSION ". Command line:\n");
         args.printCmdLine(stderr);
