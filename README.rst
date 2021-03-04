@@ -39,9 +39,10 @@ fixed releases of any dependencies are fetched and compiled with the software.
 ::
 
     $ git clone https://github.com/alevar/tiebrush.git --recursive
+    $ cd tiebrush/
     $ cmake -DCMAKE_BUILD_TYPE=Release .
     $ make -j4
-    $ sudo make install
+    $ make install
 
 If you are using a very old version of Git (< 1.6.5) the flag ``--recursive`` does not exist.
 In this case you need to clone the submodule separately  (``git submodule update --init --recursive``).
@@ -76,18 +77,27 @@ The goal is to generate this composite BAM file which multiplexes read alignment
 samples, painting a comprehensive "background" picture of read alignments with their counts across
 many samples.
 
-  tiebrush [-o <outfile>.bam] list.txt | in1.bam in2.bam ... inN.bam
+  tiebrush  [-h] -o OUTPUT [-L] [-P] [-E] [-S] [-M] [-N max_NH_value] [-Q min_mapping_quality] [-F FLAGS] ...
 
-  -C, --cigar        merge if only CIGAR string is the same.
-  -P, --clip         merge if clipped CIGAR string is the same.
-  -E, --exon         merge if exon boundaries are the same.
-  -S, --keep_supp    keep supplementary alignments.
-  -M, --keep_unmap   keep unmapped reads as well.
-  -K, --keep_names   keep names in the original format. if not set - all values will be set incrementally.
-  -U, --keep_quals   keep quality strings for the collapsed records. Note that quality strings are randomly chosen if 2 or more records are collapsed.
-  -N                maximum NH score (if available) to include.
-  -Q                minimum mapping quality to include.
-  -F                bits in SAM flag to use in read comparison.
+  Positional Arguments
+
+  ...        Input can be provided as a space-delimited list of filenames at the end of the command line or as a text file containing a list of filenames one per each line
+
+  Non-Optional Arguments:
+
+  -o        File for BAM output
+
+  Optional Arguments:
+
+  -h, --help		Show this help message and exit
+  -L, --full        If enabled, only reads with the same CIGAR and MD strings will be grouped and collapsed. By default, TieBrush will consider the CIGAR string only when grouping reads
+  -P, --clip         If enabled, reads will be grouped by clipped CIGAR string. In this mode 5S10M5S and 3S10M3S CIGAR strings will be grouped if the coordinates of the matching substring (10M) are the same between reads
+  -E, --exon         If enabled, reads will be grouped if their exon boundaries are the same. This option discards any structural variants contained in mapped substrings of the read and only considers start and end coordinates of each non-splicing segment of the CIGAR string
+  -S, --keep-supp    If enabled, supplementary alignments will be included in the collapsed groups of reads. By default, TieBrush removes any mappings not listed as primary (0x100). Note, that if enabled, each supplementary mapping will count as a separate read
+  -M, --keep-unmap   If enabled, unmapped reads will be retained (uncollapsed) in the output. By default, TieBrush removes any unmapped reads
+  -N                Maximum NH score (if available) to include.
+  -Q                Minimum mapping quality to include.
+  -F                Bits in SAM flag to use in read comparison. Only reads that have specified flags will be merged together (default: 0)
 
 SAM tags implemented
 --------------------
@@ -100,47 +110,47 @@ If either YC or YX tags are missing (i.e. GBamRecord::__tag_int__() call returns
 TieCov
 """"""
 
-The tiecov utility can take the output file produced by TieBrush and can generate the following auxiliary base/junction coverage files:
+The TieCov utility can take the output file produced by TieBrush and can generate the following auxiliary files:
  1. a BedGraph file with the coverage data (see http://genome.ucsc.edu/goldenPath/help/bedgraph.html); this file can be converted to BigWig (using bedGraphToBigWig) or to TDF format (using igvtools) in order to be loaded in IGV as an additional coverage track
  2. a junction BED file which can be loaded directly in IGV as an additional junction track (http://software.broadinstitute.org/software/igv/splice_junctions)
  3. a heatmap BED that uses color intensity to represent the number of samples that contain each position.
 
-  tiecov [-b out.flt.bam] [-s out.sample.bed] [-c out.coverage.bedgraph] [-j out.junctions.bed] in.bam
+  tiecov [-s out.sample.bed] [-c out.coverage.bedgraph] [-j out.junctions.bed] [-W] in.bam
 
-  -b    bam file after applying filters (-N/-Q)
-  -s    BED file with number of samples which contain alignments for each interval.
-  -c    BedGraph file with coverage for all mapped bases.
-  -j    BED file with coverage of all splice-junctions in the input file.
-  -N    maximum NH score (if available) to include when reporting coverage
-  -Q    minimum mapping quality to include when reporting coverage
+  -s    output BED file with an estimate of the number of samples which contain alignments for each interval.
+  -c    output BedGraph (or BedWig with '-W') file with coverage for all mapped bases.
+  -j    output BED file with coverage of all splice-junctions in the input file.
+  -W    save coverage in BigWig format. Default output is in Bed format.
 
 TieWrap
 """""""
 
-TieWrap is a small utility script provided to make running tiebrush on large datasets a bit easier.
+TieWrap is a small utility script provided to make running TieBrush on large datasets a bit easier.
 Unlike TieBrush, TieWrap can be launched with as many input files as needed and will automatically
 divide them into batches processing and combining batches to produce a single representation at the end.
 All standard TieBrush arguments can be passed over to TieWrap. Additionally size of individual batches
 as well as the concurrency parameters can be set explicitely.
 
-  tiewrap.py [-h] -o OUTPUT [-C] [-P] [-E] [-S] [-M] [-N MAX_NH] [-Q MAX_MAP_QUAL] [-F FLAGS] [-t THREADS] [-b BATCH_SIZE] list.txt | in1.bam in2.bam ... inN.bam
+  tiewrap.py [-h] -o OUTPUT [-L] [-P] [-E] [-S] [-M] [-N MAX_NH] [-Q MIN_MAP_QUAL] [-F FLAGS] [-t THREADS] [-b BATCH_SIZE] ...
+
+  Non-Optional Arguments:
+
+  -o, --output          File for BAM output.
+
+  Positional arguments:
+
+  ...       Input can be provided as a space-delimited list of filenames or as a textfile containing a list of filenames one per each line.
+
+  Optional arguments:
 
   -h, --help            show this help message and exit
-  -o OUTPUT, --output OUTPUT
-                        output file
-  -C, --cigar           merge if only CIGAR string is the same
-  -P, --clip            merge if clipped CIGAR string is the same
-  -E, --exon            merge if exon boundaries are the same
-  -S, --keep-supp       keep supplementary alignments
-  -M, --keep-unmap      keep unmapped reads
-  -N MAX_NH, --max-nh MAX_NH
-                        maximum NH score of the reads to retain
-  -Q MAX_MAP_QUAL, --max-map-qual MAX_MAP_QUAL
-                        maximum NH score of the reads to retain
-  -F FLAGS, --flags FLAGS
-                        bits in SAM flag to use in read comparison
-  -t THREADS, --threads THREADS
-                        number of threads to use
-  -b BATCH_SIZE, --batch-size BATCH_SIZE
-                        Number of input files to process in a batch on each
-                        thread
+  -L, --full            If enabled, only reads with the same CIGAR and MD strings will be grouped and collapsed. By default, TieBrush will consider the CIGAR string only when grouping reads.
+  -P, --clip            If enabled, reads will be grouped by clipped CIGAR string. In this mode 5S10M5S and 3S10M3S cigar strings will be grouped if the coordinates of the matching substring (10M) are the same between reads.
+  -E, --exon            If enabled, reads will be grouped if their exon boundaries are the same. This option discards any structural variants contained in mapped substrings of the read and only considers start and end coordinates of each non-splicing segment of the CIGAR string.
+  -S, --keep-supp       If enabled, supplementary alignments will be included in the collapsed groups of reads. By default, TieBrush removes any mappings not listed as primary (0x100). Note, that if enabled, each supplementary mapping will count as a separate read.
+  -M, --keep-unmap      If enabled, unmapped reads will be retained (uncollapsed) in the output. By default, TieBrush removes any unmapped reads.
+  -N, --max-nh          Maximum NH score of the reads to retain.
+  -Q, --min-map-qual    Minimum mapping quality of the reads to retain.
+  -F, --flags           Bits in SAM flag to use in read comparison. Only reads that have specified flags will be merged together (default: 0)
+  -t, --threads         Number of threads to use.
+  -b, --batch-size      Number of input files to process in a batch on each thread.

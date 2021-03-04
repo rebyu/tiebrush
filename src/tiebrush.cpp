@@ -10,22 +10,60 @@
 #include "tmerge.h"
 #include <gclib/GBitVec.h>
 
-#define VERSION "0.0.5"
+#define VERSION "0.0.6"
 
-const char* USAGE="TieBrush v" VERSION " usage:\n"
-                  " tiebrush [-o <outfile>.bam] list.txt | in1.bam in2.bam ...\n"
-                  " Other options: \n"
-                  "  --cigar,-C        : merge if only CIGAR string is the same\n"
-                  "  --clip,-P         : merge if clipped CIGAR string is the same\n"
-                  "  --exon,-E         : merge if exon boundaries are the same\n"
-                  "  --keep_supp,-S    : keep supplementary alignments\n"
-                  "  --keep_unmap,-M   : keep unmapped reads as well\n"
-                  "  --keep_names,-K   : keep names in the original format. if not set - all values will be set incrementally\n"
-                  "  --keep_quals,-U   : keep quality strings for the collapsed records. Note that quality strings are randomly chosen if 2 or more records are collapsed\n"
-                  "  -N                : maximum NH score (if available) to include\n"
-                  "  -Q                : minimum mapping quality to include\n"
-                  "  -F                : bits in SAM flag to use in read comparison\n"
-                  "  --consensus,-c    : enable consensus mode. If \n";
+const char* USAGE = " TieBrush v" VERSION "\n"
+                              "\n"
+                              "==================\n"
+                              "Summarize and filter read alignments from multiple sequencing samples "
+                              "(taken as sorted SAM/BAM/CRAM files).This utility aims to merge/collapse "
+                              "\"duplicate\" read alignments across multiple sequencing samples (inputs), "
+                              "adding custom SAM tags in order to keep track of the \"alignment multiplicity\" "
+                              "count (how many times the same alignment is seen across all input data) and "
+                              "\"sample count\" (how many samples show that same alignment).\n"
+                              "==================\n"
+                              "\n"
+                              " usage: tiebrush  [-h] -o OUTPUT [-L] [-P] [-E] [-S] [-M] [-N max_NH_value] "
+                              "[-Q min_mapping_quality] [-F FLAGS] ...\n"
+                              "\n"
+                              " Positional Arguments: \n"
+                              "  input\t\t\tInput can be provided as a space-delimited\n"
+                              "       \t\t\tlist of filenames at the end of the command\n"
+                              "       \t\t\tline or as a text file containing a list of\n"
+                              "       \t\t\tfilenames one per each line\n"
+                              "\n"
+                              " Non-Optional Arguments:\n"
+                              "  -o\t\t\tFile for BAM output\n"
+                              "\n"
+                              " Optional Arguments:\n"
+                              "  -h,--help\t\tShow this help message and exit\n"
+                              "  -L,--full\t\tIf enabled, only reads with the same CIGAR\n"
+                              "           \t\tand MD strings will be grouped and collapsed.\n"
+                              "           \t\tBy default, TieBrush will consider the CIGAR\n"
+                              "           \t\tstring only when grouping reads\n"
+                              "  -P,--clip\t\tIf enabled, reads will be grouped by clipped\n"
+                              "           \t\tCIGAR string. In this mode 5S10M5S and 3S10M3S\n"
+                              "           \t\tCIGAR strings will be grouped if the coordinates\n"
+                              "           \t\tof the matching substring (10M) are the same\n"
+                              "           \t\tbetween reads\n"
+                              "  -E,--exon\t\tIf enabled, reads will be grouped if their exon\n"
+                              "           \t\tboundaries are the same. This option discards\n"
+                              "           \t\tany structural variants contained in mapped\n"
+                              "           \t\tsubstrings of the read and only considers start\n"
+                              "           \t\tand end coordinates of each non-splicing segment\n"
+                              "           \t\tof the CIGAR string\n"
+                              "  -S,--keep-supp\tIf enabled, supplementary alignments will be\n"
+                              "                \tincluded in the collapsed groups of reads.\n"
+                              "                \tBy default, TieBrush removes any mappings\n"
+                              "                \tnot listed as primary (0x100). Note, that if enabled,\n"
+                              "                \teach supplementary mapping will count as a separate read\n"
+                              "  -M,--keep-unmap\tIf enabled, unmapped reads will be retained (uncollapsed)\n"
+                              "                 \tin the output. By default, TieBrush removes any\n"
+                              "                 \tunmapped reads\n"
+                              "  -N\t\t\tMaximum NH score of the reads to retain\n"
+                              "  -Q\t\t\tMinimum mapping quality of the reads to retain\n"
+                              "  -F\t\t\tBits in SAM flag to use in read comparison. Only reads that\n"
+                              "    \t\t\thave specified flags will be merged together (default: 0)";
 
 // 1. add mode to select representative alignment
 // 2. add mode to select consensus sequence
@@ -35,8 +73,8 @@ const char* USAGE="TieBrush v" VERSION " usage:\n"
 // 6. fix PG/RG sample confusion
 
 enum TMrgStrategy {
-	tMrgStratFull=0, // same CIGAR and MD
-	tMrgStratCIGAR,  // same CIGAR (MD may differ)
+    tMrgStratCIGAR=0,  // same CIGAR (MD may differ)
+	tMrgStratFull, // same CIGAR and MD
 	tMrgStratClip,   // same CIGAR after clipping
 	tMrgStratExon    // same exons
 };
@@ -313,15 +351,12 @@ class SPData { // Same Point data
 	                 //number of bits set will be stored as YX:i:(samples.count()+accYX)
     std::vector<uint64_t> sample_dupcounts; // within each sample how many records were collapsed
                                             // number of bits set will be stored as YX:i:(samples.count()+accYX)
-    std::vector<uint8_t> vars; // variants observed - used in consensus sequence generation
-    bool consensus_mode = false; // if set to true - will compute consensus for each SPData
-    void set_consensus_mode(bool mode){consensus_mode=mode;}
 	int dupCount; //duplicity count - how many single-alignments were merged into r
 	              // will be stored as tag YC:i:(dupCount+accYC)
 	GSamRecord* r;
 	char tstrand; //'-','+' or '.'
     SPData(GSamRecord* rec=NULL):settled(false), accYC(0), accYX(0), maxYD(0),samples(NULL),
-    		dupCount(0), r(rec), tstrand('.'), consensus_mode(false) {
+    		dupCount(0), r(rec), tstrand('.') {
     	if (r!=NULL) tstrand=r->spliceStrand();
     }
 
@@ -549,7 +584,7 @@ int main(int argc, char *argv[])  {
 // <------------------ main() end -----
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;debug;verbose;version;cigar;clip;exon;CPEDVho:N:Q:");
+    GArgs args(argc, argv, "help;debug;verbose;version;full;clip;exon;keep-supp;keep-unmap;SMLPEDVho:N:Q:F:");
     args.printError(USAGE, true);
     if (args.getOpt('h') || args.getOpt("help") || args.startNonOpt()==0) {
         GMessage(USAGE);
@@ -573,22 +608,19 @@ void processOptions(int argc, char* argv[]) {
     if (!flag_str.is_empty()) {
         options.flags=flag_str.asInt();
     }
-    options.keep_supplementary = (args.getOpt("keep_supp")!=NULL || args.getOpt("S")!=NULL);
-    options.keep_unmapped = (args.getOpt("keep_unmap")!=NULL || args.getOpt("M")!=NULL);
+    options.keep_supplementary = (args.getOpt("keep-supp")!=NULL || args.getOpt("S")!=NULL);
+    options.keep_unmapped = (args.getOpt("keep-unmap")!=NULL || args.getOpt("M")!=NULL);
 
-    bool stratC=(args.getOpt("cigar")!=NULL || args.getOpt('C')!=NULL);
+    bool stratF=(args.getOpt("full")!=NULL || args.getOpt('L')!=NULL);
     bool stratP=(args.getOpt("clip")!=NULL || args.getOpt('P')!=NULL);
     bool stratE=(args.getOpt("exon")!=NULL || args.getOpt('E')!=NULL);
-    if (stratC | stratP | stratE) {
-        if (!(stratC ^ stratP ^ stratE))
+    if (stratF | stratP | stratE) {
+        if (!(stratF ^ stratP ^ stratE))
             GError("Error: only one merging strategy can be requested.\n");
-        if (stratC) mrgStrategy=tMrgStratCIGAR;
+        if (stratF) mrgStrategy=tMrgStratFull;
         else if (stratP) mrgStrategy=tMrgStratClip;
         else mrgStrategy=tMrgStratExon;
     }
-
-    bool consensus_mode = (args.getOpt("consensus")!=NULL || args.getOpt('c')!=NULL);
-    // TODO: set the mode
 
     debugMode=(args.getOpt("debug")!=NULL || args.getOpt('D')!=NULL);
     verbose=(args.getOpt("verbose")!=NULL || args.getOpt('V')!=NULL);

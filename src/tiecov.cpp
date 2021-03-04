@@ -15,26 +15,35 @@
 #include "GSam.h"
 #include <libBigWig/bigWig.h>
 
-#define VERSION "0.0.5"
+#define VERSION "0.0.6"
 
-const char* USAGE="TieCov v" VERSION " usage:\n"
-                  " tiecov [-b out.flt.bam] [-s out.sample.bed] [-c out.coverage.bedgraph] [-j out.junctions.bed] in.bam\n"
-                  " Otions: \n"
-                  "  -b   : bam file after applying filters (-N/-Q)\n"
-                  "  -s   : BED file with number of samples which contain alignments for each interval.\n"
-                  "  -c   : BedGraph file with coverage for all mapped bases.\n"
-                  "  -j   : BED file with coverage of all splice-junctions in the input file.\n"
-                  "  -N   : maximum NH score (if available) to include when reporting coverage\n"
-                  "  -Q   : minimum mapping quality to include when reporting coverage\n"
-                  "  -W   : save output in BigWig format. Default output is in Bed and BedGraph formats\n";
+const char* USAGE=" TieCov v" VERSION "\n"
+                  "\n"
+                  "==================\n"
+                  "The TieCov utility can take the output file produced by TieBrush and generate the following auxiliary files:\n"
+                  " 1. BedGraph file with the coverage data\n"
+                  " 2. Junction BED file\n"
+                  " 3. a heatmap BED that uses color intensity to represent the number of samples that contain each position\n"
+                  "==================\n"
+                  "\n"
+                  " usage: tiecov [-s out.sample] [-c out.coverage] [-j out.junctions] [-W] in.bam\n"
+                  "\n"
+                  " Positional Arguments: \n"
+                  "  input\tInput alignment in SAM/BAM/CRAM format is\n"
+                  "       \tprovided as the last argument in the command\n"
+                  "\n"
+                  " Optional Arguments (At least one of s/c/j must be specified):\n"
+                  "  -h,--help\tShow this help message and exit\n"
+                  "  -s\t\tBED file with an estimate of the number of samples\n"
+                  "    \t\twhich contain alignments for each interval.\n"
+                  "  -c\t\tBedGraph (or BedWig with '-W') file with coverage\n"
+                  "    \t\tfor all mapped bases.\n"
+                  "  -j\t\tBED file with coverage of all splice-junctions\n"
+                  "    \t\tin the input file.\n"
+                  "  -W\t\tsave coverage in BigWig format. Default output\n"
+                  "    \t\tis in Bed format\n";
 
-struct Filters{
-    int max_nh = MAX_INT;
-    int min_qual = -1;
-} filters;
-
-GStr covfname, jfname, bfname, infname, sfname;
-FILE* boutf=NULL;
+GStr covfname, jfname, infname, sfname;
 FILE* coutf=NULL;
 FILE* joutf=NULL;
 FILE* soutf=NULL;
@@ -45,7 +54,6 @@ bigWigFile_t *joutf_bw = NULL;
 bigWigFile_t *soutf_bw = NULL;
 
 std::vector<std::string> sample_info; // holds data about samples from the header
-std::vector<int> sample_lst; // if -S provided - this holds the list of samples to extract data from
 
 bool debugMode=false;
 bool verbose=false;
@@ -414,9 +422,6 @@ int main(int argc, char *argv[])  {
 	while (samreader.next(brec)) {
         uint32_t dupcount=0;
         std::vector<int> cur_samples;
-        int nh = brec.tag_int("NH");
-        if(nh>filters.max_nh)  continue;
-        if (brec.mapq()<filters.min_qual) continue;
         int endpos=brec.end;
         if (brec.refId()!=prev_tid || (int)brec.start>b_end) {
             if (coutf) {
@@ -505,25 +510,17 @@ int main(int argc, char *argv[])  {
 }// <------------------ main() end -----
 
 void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;debug;verbose;version;DVWhc:s:j:b:N:Q:");
+    GArgs args(argc, argv, "help;debug;verbose;version;DVWhc:s:j:");
     args.printError(USAGE, true);
     if (args.getOpt('h') || args.getOpt("help") || args.startNonOpt()==0) {
         GMessage(USAGE);
         exit(1);
     }
 
-    if (args.getOpt('h') || args.getOpt("help")) {
-        fprintf(stdout,"%s",USAGE);
-        exit(0);
-    }
-
-    GStr max_nh_str=args.getOpt('N');
-    if (!max_nh_str.is_empty()) {
-        filters.max_nh=max_nh_str.asInt();
-    }
-    GStr min_qual_str=args.getOpt('Q');
-    if (!min_qual_str.is_empty()) {
-        filters.min_qual=min_qual_str.asInt();
+    if ((args.getOpt('c') || args.getOpt('s') || args.getOpt('j'))==0){
+        std::cerr<<"Must provide at least one argument: -c/-j/-s"<<std::endl;
+        GMessage(USAGE);
+        exit(1);
     }
 
     debugMode=(args.getOpt("debug")!=NULL || args.getOpt('D')!=NULL);
@@ -541,7 +538,6 @@ void processOptions(int argc, char* argv[]) {
     }
     covfname=args.getOpt('c');
     jfname=args.getOpt('j');
-    bfname=args.getOpt('b');
     sfname=args.getOpt('s');
 
     covfname_bw=args.getOpt('c');
