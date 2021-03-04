@@ -3,15 +3,23 @@ This directory contains a small simulated dataset for testing and getting famili
 
 ## Running TieBrush and TieCov
 
+Output of the commands below is provided along with the simulated data and includes the following files:
+1. example/t1/t1.bam and example/t2/t2.bam - collapsed representations of simulated tissue #1 and #2 computed with TieBrush
+2. example/t1/t1.coverage.bedgraph and example/t2/t2.coverage.bedgraph - Coverage computed in BED/BedGraph format
+3. example/t1/t1.sample.bedgraph and example/t2/t2.sample.bedgraph - Approximated number of samples computed for each mapped position in BED/BedGraph format
+4. example/t1/t1.junctions.bed and example/t2/t2.junctions.bed - Splice Junction coordinates and coverage computed in BED format
+
 ### Collapsing reads and building representative alignment for each tissue with TieBrush
 
 ```tiebrush -o t1/t1.bam t1/t1s0.bam t1/t1s1.bam t1/t1s2.bam t1/t1s3.bam t1/t1s4.bam t1/t1s5.bam t1/t1s6.bam t1/t1s7.bam t1/t1s8.bam t1/t1s9.bam```
+
 ```tiebrush -o t2/t2.bam t2/t2s0.bam t2/t2s1.bam t2/t2s2.bam t2/t2s3.bam t2/t2s4.bam t2/t2s5.bam t2/t2s6.bam t2/t2s7.bam t2/t2s8.bam t2/t2s9.bam```
 
 ### Extracting BED-formatted summaries for each tissue with TieCov
 
-```tiecov -s t1/t1.sample.bed -c t1/tb.coverage.bed -j t1/tb.junctions.bed t1/tb.bam```
-```tiecov -s t2/t2.sample.bed -c t2/tb.coverage.bed -j t2/tb.junctions.bed t2/tb.bam```
+```tiecov -s t1/t1.sample -c t1/tb.coverage -j t1/tb.junctions t1/tb.bam```
+
+```tiecov -s t2/t2.sample -c t2/tb.coverage -j t2/tb.junctions t2/tb.bam```
 
 ### Visualizing results in IGV
 Upon completion, tiecov will have generated several summary files for each tissue.
