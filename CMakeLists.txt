@@ -19,6 +19,7 @@ ExternalProject_Add(htslib
     INSTALL_COMMAND ""
 )
 
+# very jankie solution to fix issues with linking libbigwig
 ExternalProject_Add(libBigWig
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/include/libBigWig/
     BUILD_ALWAYS 1
@@ -26,6 +27,10 @@ ExternalProject_Add(libBigWig
     CONFIGURE_COMMAND ""
     BUILD_COMMAND make
     INSTALL_COMMAND ""
+)
+execute_process(
+        COMMAND make -C ${CMAKE_SOURCE_DIR}/include/libBigWig
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/include/libBigWig
 )
 
 find_library(LBW_LIB BigWig "${CMAKE_SOURCE_DIR}/include/libBigWig")
