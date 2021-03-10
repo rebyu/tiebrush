@@ -4,6 +4,3 @@
 [submodule "include/htslib"]
 	path = include/htslib
 	url = https://github.com/samtools/htslib.git
-[submodule "include/libBigWig"]
-	path = include/libBigWig
-	url = https://github.com/dpryan79/libBigWig
