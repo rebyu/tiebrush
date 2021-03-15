@@ -30,10 +30,12 @@ if (TIEBRUSH_STATIC_BUILD)
     add_definitions(-DTIEBRUSH_STATIC_BUILD=1)
     set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
     set(BUILD_SHARED_LIBS OFF)
-    set (CMAKE_EXE_LINKER_FLAGS "-static -static-libgcc -static-libstdc++")
     # apple does not support fully static builds, but at least libgcc and libstdc++
     if (APPLE)
+        set (CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++")
         message(WARNING "WARNING: Builds on Mac are never fully static.")
+    else ()
+        set (CMAKE_EXE_LINKER_FLAGS "-static -static-libgcc -static-libstdc++")
     endif ()
     # on linux cmake adds -rdynamic automatically which clang can't handle in static builds
     # if (CMAKE_SYSTEM_NAME MATCHES "Linux")
@@ -67,7 +69,11 @@ add_executable(tiebrush src/tiebrush.cpp
         ${CMAKE_SOURCE_DIR}/include/gclib/GBase.cpp)
 
 add_dependencies(tiebrush htslib)
-target_link_libraries(tiebrush hts z lzma bz2 pthread)
+if (APPLE AND TIEBRUSH_STATIC_BUILD)
+    target_link_libraries(tiebrush ${CMAKE_SOURCE_DIR}/include/htslib/libhts.a z lzma bz2 pthread)
+else ()
+    target_link_libraries(tiebrush ${CMAKE_SOURCE_DIR}/include/htslib/libhts.a z lzma bz2 pthread)
+endif ()
 
 ExternalProject_Add(libBigWig
         GIT_REPOSITORY "https://github.com/cpockrandt/libBigWig"
@@ -97,6 +103,13 @@ add_executable(tiecov src/tiecov.cpp
         ${CMAKE_SOURCE_DIR}/include/gclib/GBase.cpp)
 
 add_dependencies(tiecov htslib libBigWig)
-target_link_libraries(tiecov BigWig hts z lzma bz2 pthread)
 
-install(TARGETS tiebrush tiecov DESTINATION bin)
+if (APPLE AND TIEBRUSH_STATIC_BUILD)
+    target_link_libraries(tiecov ${CMAKE_SOURCE_DIR}/include/libBigWig/libBigWig.a ${CMAKE_SOURCE_DIR}/include/htslib/libhts.a z lzma bz2 pthread)
+else ()
+    target_link_libraries(tiecov ${CMAKE_SOURCE_DIR}/include/libBigWig/libBigWig.a ${CMAKE_SOURCE_DIR}/include/htslib/libhts.a z lzma bz2 pthread)
+endif ()
+
+install(TARGETS tiebrush DESTINATION ${CMAKE_INSTALL_PREFIX})
+install(TARGETS tiecov DESTINATION ${CMAKE_INSTALL_PREFIX})
+install(PROGRAMS tiewrap.py DESTINATION ${CMAKE_INSTALL_PREFIX})

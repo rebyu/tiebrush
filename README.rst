@@ -44,6 +44,13 @@ fixed releases of any dependencies are fetched and compiled with the software.
     $ make -j4
     $ make install
 
+For a fully static build `-DTIEBRUSH_STATIC_BUILD=1` needs to be added to the list of arguments
+in the cmake command.
+
+By default make install will likely require administrative privileges. To specify custom
+installation path `-DCMAKE_INSTALL_PREFIX=<custom/installation/path>` needs to be added to
+the list of arguments in the cmake command.
+
 If you are using a very old version of Git (< 1.6.5) the flag ``--recursive`` does not exist.
 In this case you need to clone the submodule separately  (``git submodule update --init --recursive``).
 
