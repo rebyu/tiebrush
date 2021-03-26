@@ -76,7 +76,7 @@ else ()
 endif ()
 
 ExternalProject_Add(libBigWig
-        GIT_REPOSITORY "https://github.com/cpockrandt/libBigWig"
+        GIT_REPOSITORY "https://github.com/alevar/libBigWig"
         UPDATE_COMMAND ""
         DOWNLOAD_DIR "${CMAKE_SOURCE_DIR}/include/"
         SOURCE_DIR "${CMAKE_SOURCE_DIR}/include/libBigWig"
