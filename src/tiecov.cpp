@@ -69,10 +69,24 @@ struct CJunc {
 	bool operator==(const CJunc& a) {
 		return (strand==a.strand && start==a.start && end==a.end);
 	}
-	bool operator<(const CJunc& a) {
-		if (start==a.start) return (end<a.end);
-		else return (start<a.start);
-	}
+//	bool operator<(const CJunc& a) {
+//		if (start==a.start) return (end<a.end);
+//		else return (start<a.start);
+//	}
+
+    bool operator<(const CJunc& a) {
+        if (strand==a.strand){
+            if (start==a.start){
+                return (end<a.end);
+            }
+            else{
+                return (start<a.start);
+            }
+        }
+        else{
+            return strand<a.strand;
+        }
+    }
 
 	void add(CJunc& j) {
        dupcount+=j.dupcount;
@@ -89,7 +103,7 @@ GArray<CJunc> junctions(64, true);
 
 void addJunction(GSamRecord& r, int dupcount) {
 	char strand = r.spliceStrand();
-	if (strand!='+' && strand!='-') return;
+//	if (strand!='+' && strand!='-') return; // TODO: should we output .?
 	for (int i=1;i<r.exons.Count();i++) {
 		CJunc j(r.exons[i-1].end+1, r.exons[i].start-1, strand,
 				dupcount);
