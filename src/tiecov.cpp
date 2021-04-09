@@ -69,22 +69,36 @@ struct CJunc {
 	bool operator==(const CJunc& a) {
 		return (strand==a.strand && start==a.start && end==a.end);
 	}
-//	bool operator<(const CJunc& a) {
+//	bool operator<(const CJunc& a) { // sort no strand
 //		if (start==a.start) return (end<a.end);
 //		else return (start<a.start);
 //	}
 
-    bool operator<(const CJunc& a) {
-        if (strand==a.strand){
-            if (start==a.start){
-                return (end<a.end);
+//    bool operator<(const CJunc& a) { // sort by strand first
+//        if (strand==a.strand){
+//            if (start==a.start){
+//                return (end<a.end);
+//            }
+//            else{
+//                return (start<a.start);
+//            }
+//        }
+//        else{
+//            return strand<a.strand;
+//        }
+//    }
+
+    bool operator<(const CJunc& a) { // sort by strand last
+        if (start==a.start){
+            if(end==a.end){
+                return strand<a.strand;
             }
             else{
-                return (start<a.start);
+                return (end<a.end);
             }
         }
         else{
-            return strand<a.strand;
+            return (start<a.start);
         }
     }
 
