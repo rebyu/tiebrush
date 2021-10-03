@@ -27,6 +27,8 @@ The initial goal is to generate this composite BAM file which multiplexes read a
 from many sequencing samples, painting a comprehensive "background" picture of read alignments
 with their counts across many samples.
 
+    Ales Varabyou, Geo Pertea, Christopher Pockrandt, Mihaela Pertea, TieBrush: an efficient method for aggregating and summarizing mapped reads across large datasets, Bioinformatics, 2021;, btab342, https://doi.org/10.1093/bioinformatics/btab342
+
 Installation
 ^^^^^^^^^^^^
 

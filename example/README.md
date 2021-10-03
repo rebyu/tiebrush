@@ -17,9 +17,9 @@ Output of the commands below is provided along with the simulated data and inclu
 
 ### Extracting BED-formatted summaries for each tissue with TieCov
 
-```tiecov -s t1/t1.sample -c t1/tb.coverage -j t1/tb.junctions t1/tb.bam```
+```tiecov -s t1/t1.sample -c t1/tb.coverage -j t1/tb.junctions t1/t1.bam```
 
-```tiecov -s t2/t2.sample -c t2/tb.coverage -j t2/tb.junctions t2/tb.bam```
+```tiecov -s t2/t2.sample -c t2/tb.coverage -j t2/tb.junctions t2/t2.bam```
 
 ### Visualizing results in IGV
 Upon completion, tiecov will have generated several summary files for each tissue.
