@@ -311,7 +311,6 @@ void flushCoverage(FILE* outf,sam_hdr_t* hdr, std::vector<std::pair<float,uint64
 
 void discretize(std::vector<std::pair<float,uint64_t>>& bvec1){
     for(auto& val : bvec1){
-        //val.second = std::ceil(val.first);
         val.second = std::ceil(val.first);
         val.first = 0;
     }
@@ -337,7 +336,7 @@ void normalize(std::vector<std::pair<float,uint64_t>>& bvec,float mint, float ma
     float mult = (maxt-mint);
 
     for (auto& val : bvec){
-        val.first = (val.second/denom)*mult+mint;
+        val.first = ((float)val.second/denom)*mult+mint;
     }
 }
 
@@ -440,10 +439,12 @@ int main(int argc, char *argv[])  {
         fprintf(soutf, "track type=bedGraph name=\"Sample Count Heatmap\" description=\"Sample Count Heatmap\" visibility=full graphType=\"heatmap\" color=200,100,0 altColor=0,100,200\n");
     }
 
+    load_sample_info(samreader.header(),sample_info);
+
     int prev_tid=-1;
     GVec<uint64_t> bcov(2048*1024);
     std::vector<std::pair<float,uint64_t>> bsam(2048*1024,{0,1}); // number of samples. 1st - current average; 2nd - total number of values
-    std::vector<std::set<int>> bsam_idx(2048*1024,std::set<int>{}); // for indexed runs
+//    std::vector<std::set<int>> bsam_idx(2048*1024,std::set<int>{}); // for indexed runs
     int b_end=0; //bundle start, end (1-based)
     int b_start=0; //1 based
     GSamRecord brec;
@@ -460,12 +461,12 @@ int main(int argc, char *argv[])  {
             }
             if (soutf) {
                 discretize(bsam);
-                normalize(bsam,0.1,1.5,sample_info.size());
+                normalize(bsam,0,1.5,sample_info.size());
                 flushCoverage(soutf,samreader.header(),bsam,prev_tid,b_start);
             }
             if (joutf) {
                 flushJuncs(joutf, samreader.refName(prev_tid));
-            }
+            } // TODO: write the last column to 3 dec places
             b_start=brec.start;
             b_end=endpos;
             if (coutf || coutf_bw) {
@@ -475,8 +476,8 @@ int main(int argc, char *argv[])  {
             if (soutf) {
                 bsam.clear();
                 bsam.resize(b_end-b_start+1,{0,1});
-                bsam_idx.clear();
-                bsam_idx.resize(b_end-b_start+1,std::set<int>{});
+//                bsam_idx.clear();
+//                bsam_idx.resize(b_end-b_start+1,std::set<int>{});
             }
             prev_tid=brec.refId();
         } else { //extending current bundle
@@ -485,7 +486,7 @@ int main(int argc, char *argv[])  {
                 bcov.setCount(b_end-b_start+1, (int)0);
                 if (soutf){
                     bsam.resize(b_end-b_start+1,{0,1});
-                    bsam_idx.resize(b_end-b_start+1,std::set<int>{});
+//                    bsam_idx.resize(b_end-b_start+1,std::set<int>{});
                 }
             }
         }
@@ -499,7 +500,7 @@ int main(int argc, char *argv[])  {
         }
 
         if(soutf){
-            addSamples(brec,cur_samples,bsam_idx,b_start);
+//            addSamples(brec,cur_samples,bsam_idx,b_start);
             float accYX = 0;
             accYX = (float)brec.tag_int("YX", 1);
             addMean(brec, accYX, bsam, b_start);
