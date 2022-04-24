@@ -270,21 +270,22 @@ class Locus:
         return self.seqid + self.strand + ":" + str(self.get_start()) + "-" + str(self.get_end())
 
     def plot(self,out_fname):
+        color_dens = "#ffb703"
+        color_spines = "#fb8500"
+        color_exon = "#023047"
+        color_cds = "#219ebc"
 
-        plt.close("all")
-        plt.clf()
+        fig = plt.figure(figsize=(self.settings["fig_width"],self.settings["fig_height"]))
 
-        plt.figure(figsize=(self.settings["fig_width"], self.settings["fig_height"]))
+        ax = plt.subplot2grid((len(self.txs)+2, 1), (0,0),rowspan=2)
 
-        ax = plt.subplot2grid((len(self.txs) + 2, 1), (0, 0), rowspan=2)
-
-        ax.fill_between(self.covx, self.cov, y2=0, color="red", lw=0)
+        ax.fill_between(self.covx, self.cov,y2=0, color=color_dens, lw=0)
 
         maxheight = max(self.cov)
         ymax = 1.1 * maxheight
         ymin = -.5 * ymax
 
-        for jxn, val in self.introns.items():
+        for jxn,val in self.introns.items():
             leftss, rightss = jxn
 
             ss1, ss2 = [self.graphcoords[leftss - self.get_start() - 1],
@@ -304,54 +305,64 @@ class Locus:
             midpt = Locus.cubic_bezier(pts, .5)
 
             if self.settings["number_junctions"]:
-                plt.text(midpt[0], midpt[1], '%s' % (val),
+                plt.text(midpt[0], midpt[1], '%s'%(val),
                          fontsize=self.settings["font_size"], ha='center', va='center', backgroundcolor='w')
 
-            pp1 = PathPatch(Path(pts, [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4]),
-                            ec="r", lw=np.log(val + 1) / np.log(10), fc='none')
+            pp1 = PathPatch(Path(pts,[Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4]),
+                            ec=color_spines, lw=np.log(val + 1) / np.log(10), fc='none')
 
             ax.add_patch(pp1)
 
+        ax.spines['right'].set_color('none')
+        ax.spines['top'].set_color('none')
         ax.xaxis.set_ticks_position('bottom')
-        ax.set_xlabel("Genomic coordinates : " + self.get_coords_str(), fontsize=self.settings["font_size"])
+        ax.set_xlabel("Genomic coordinates : "+self.get_coords_str(),fontsize=self.settings["font_size"])
         max_graphcoords = max(self.graphcoords) - 1
         coords_fontsize = self.settings["font_size"] - (self.settings["font_size"] * 0.2)
+        ax.set_xlim(0, max(self.graphcoords))
         ax.set_xticks(np.linspace(0, max_graphcoords, self.settings["nxticks"]),
                       [self.graphToGene[int(x)] for x in \
                        np.linspace(0, max_graphcoords, self.settings["nxticks"])],
                       fontsize=coords_fontsize)
 
-        yloc = 0
+
+        ax.set_ylabel("Coverage",fontsize=self.settings["font_size"], ha='left')
+        ax.spines["left"].set_bounds(0, max(self.cov_full))
+        ax.tick_params(axis='y',labelsize=self.settings["font_size"])
+        ax.set_ybound(lower=ax.get_ybound()[0], upper=max(self.cov_full))
+        ax.yaxis.set_ticks_position('left')
+
         exonwidth = .3
         narrows = 50
 
-        for i, tx in enumerate(self.txs):
-            ax2 = plt.subplot2grid((len(self.txs) + 2, 1), (2 + i, 0))
-            ax2.set_title(tx.get_tid(), fontsize=self.settings["font_size"])
+        locus_start = self.get_start()
+        locus_end = self.get_end()
 
-            locus_start = self.get_start()
-            locus_end = self.get_end()
+        for i,tx in enumerate(self.txs):
+            ax2 = plt.subplot2grid((len(self.txs)+2, 1),(2+i,0))
+            ax2.set_title(tx.get_tid(),fontsize=self.settings["font_size"])
 
             for s, e in tx.orf:
                 s = s - locus_start
                 e = e - locus_start
                 x = [self.graphcoords[s], self.graphcoords[e], self.graphcoords[e], self.graphcoords[s]]
-                y = [yloc - exonwidth / 6, yloc - exonwidth / 6,
-                     yloc + exonwidth / 6, yloc + exonwidth / 6]
-                ax2.fill(x, y, color="blue", lw=.5, zorder=30)
+                y = [-exonwidth / 6, -exonwidth / 6, exonwidth / 6, exonwidth / 6]
+                ax2.fill(x, y,color=color_cds, lw=.5, zorder=30)
 
             for s, e in tx.exons:
                 s = s - locus_start
                 e = e - locus_start
                 x = [self.graphcoords[s], self.graphcoords[e], self.graphcoords[e], self.graphcoords[s]]
-                y = [yloc - exonwidth / 8, yloc - exonwidth / 8,
-                     yloc + exonwidth / 8, yloc + exonwidth / 8]
-                ax2.fill(x, y, 'k', lw=.5, zorder=20)
+                y = [-exonwidth / 8, -exonwidth / 8, exonwidth / 8, exonwidth / 8]
+                ax2.fill(x, y, color=color_exon, lw=.5, zorder=20)
 
-            #             # Draw intron.
+            # Draw intron.
             tx_start = tx.get_start() - locus_start
             tx_end = tx.get_end() - locus_start
-            ax2.axhline(yloc, xmin=self.graphcoords[tx_start], xmax=self.graphcoords[tx_end], color='k', lw=2)
+
+            hline_left = self.graphcoords[tx_start]/max(self.graphcoords)
+            hline_right = self.graphcoords[tx_end]/max(self.graphcoords)
+            ax2.axhline(0,xmin=hline_left,xmax=hline_right, color=color_exon, lw=2)
 
             # Draw intron arrows.
             spread = .2 * max(self.graphcoords) / narrows
@@ -361,20 +372,17 @@ class Locus:
                     x = [loc - spread, loc, loc - spread]
                 else:
                     x = [loc + spread, loc, loc + spread]
-                y = [yloc - exonwidth / 20, yloc, yloc + exonwidth / 20]
-                if x[0] >= self.graphcoords[tx_start] and x[0] <= self.graphcoords[tx_end]:
-                    ax2.plot(x, y, lw=2, color='k')
-
-            yloc += 1
+                y = [-exonwidth / 20, 0, exonwidth / 20]
+                if x[0]>=self.graphcoords[tx_start] and x[0]<=self.graphcoords[tx_end]:
+                    ax2.plot(x, y, lw=2, color=color_exon)
 
             ax2.set_xlim(0, max(self.graphcoords))
-            #             ax2.set_ylim(-.5, 1.5)
+            ax2.set_ylim(-0.1, 0.1)
             plt.box(on=False)
             ax2.set_xticks([])
             ax2.set_yticks([])
 
-        plt.subplots_adjust(hspace=.8, wspace=.7)
-
+        plt.subplots_adjust(hspace=.5, wspace=.7)
         plt.savefig(out_fname)
 
 
