@@ -7,9 +7,10 @@ import os
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib.patches import PathPatch
 from matplotlib.path import Path
-
+from matplotlib.patches import PathPatch
+from matplotlib.gridspec import GridSpec
+from adjustText import adjust_text
 mpl.use('Agg')
 
 
@@ -108,18 +109,22 @@ class Locus:
 
         self.intervals = []  # union of all exons in the locus (minus the introns)
         self.introns = dict()
+        self.intron_cov_lst = list()
 
         self.exon_starts = []
         self.exon_ends = []
 
         self.graphcoords = None
         self.graphToGene = None
-        self.covx = None
-        self.cov = None
+        self.covx_lst = list()
+        self.cov_lst = list()
 
-        self.cov_full = None
+        self.cov_full_lst = list()
 
         self.settings = None
+
+        self.num_cov_tracks = 0
+        self.num_sj_tracks = 0
 
     @staticmethod
     def union(intervals):
@@ -173,6 +178,10 @@ class Locus:
         return self.intervals[-1][1]
 
     def add_introns(self, sj_fname):
+        assert os.path.exists(sj_fname),"Splice Junction track does not exist"
+
+        self.intron_cov_lst.append(dict())
+
         with open(sj_fname, "r") as inFP:
             for line in inFP:
                 lcs = line.strip().split("\t")
@@ -187,7 +196,9 @@ class Locus:
 
                 intron = (int(lcs[1]), int(lcs[2]) + 1)
                 if intron in self.introns:
-                    self.introns[intron] += int(lcs[4])
+                    self.intron_cov_lst[-1][intron] = int(lcs[4])
+
+        self.num_sj_tracks+=1
 
     def getScaling(self, intron_scale, exon_scale, reverse_minus):
         """
@@ -241,12 +252,18 @@ class Locus:
         return compressed_x, compressed_wiggle
 
     def add_coverage(self, cov_fname):
+        assert os.path.exists(cov_fname),"Coverage track does not exist: "+cov_fname
         # get graphcoords
-        self.graphcoords, self.graphToGene = self.getScaling(self.settings["intron_scale"], self.settings["exon_scale"],
-                                                             self.settings["reverse_minus"])
+        if self.graphcoords is None:
+            self.graphcoords, self.graphToGene = self.getScaling(self.settings["intron_scale"], self.settings["exon_scale"],
+                                                                 self.settings["reverse_minus"])
 
         # use the graphcoords to perform interval compression below
-        self.cov_full = [0 for i in range(self.get_start(), self.get_end() + 1, 1)]
+        self.cov_full_lst.append(list())
+        self.cov_lst.append(list())
+        self.covx_lst.append(list())
+
+        self.cov_full_lst[-1] = [0 for i in range(self.get_start(), self.get_end() + 1, 1)]
         with open(cov_fname, "r") as inFP:
             for line in inFP:
                 lcs = line.strip().split("\t")
@@ -261,85 +278,111 @@ class Locus:
 
                 # process coverage
                 for v in range(int(lcs[1]), int(lcs[2]), 1):
-                    self.cov_full[v - self.get_start()] = int(lcs[3])
+                    self.cov_full_lst[-1][v - self.get_start()] = int(lcs[3])
 
         # compress the vals
-        self.covx, self.cov = self.compress_intervals(self.cov_full, self.graphcoords)
+        self.covx_lst[-1], self.cov_lst[-1] = self.compress_intervals(self.cov_full_lst[-1], self.graphcoords)
+        self.num_cov_tracks+=1
 
     def get_coords_str(self):
         return self.seqid + self.strand + ":" + str(self.get_start()) + "-" + str(self.get_end())
 
     def plot(self,out_fname):
+        assert self.num_sj_tracks==self.num_cov_tracks or self.num_sj_tracks==0,"incompatible number of splice junciton and coverage tracks - the numebrs should either be the same or no splice junction tracks provided at all"
+
         color_dens = "#ffb703"
         color_spines = "#fb8500"
         color_exon = "#023047"
         color_cds = "#219ebc"
 
+        hrs = [4]*self.num_cov_tracks+[1 for i in range(len(self.txs))]
+        gs1hs = 1
+        gs2hs = 0.3
+
         fig = plt.figure(figsize=(self.settings["fig_width"],self.settings["fig_height"]))
 
-        ax = plt.subplot2grid((len(self.txs)+2, 1), (0,0),rowspan=2)
+        gs1 = GridSpec(len(self.txs)+self.num_cov_tracks, 1, height_ratios=hrs)
+        if self.num_cov_tracks>0:
+            gs1.update(hspace=gs1hs)
 
-        ax.fill_between(self.covx, self.cov,y2=0, color=color_dens, lw=0)
+        for c in range(self.num_cov_tracks):
+            final_plot = c==self.num_cov_tracks-1
+            ax = plt.subplot(gs1[c,:])
 
-        maxheight = max(self.cov)
-        ymax = 1.1 * maxheight
-        ymin = -.5 * ymax
+            ax.fill_between(self.covx_lst[c], self.cov_lst[c],y2=0, color=color_dens, lw=0)
 
-        for jxn,val in self.introns.items():
-            leftss, rightss = jxn
+            maxheight = max(self.cov_lst[c])
+            ymax = 1.1 * maxheight
+            ymin = -.5 * ymax
 
-            ss1, ss2 = [self.graphcoords[leftss - self.get_start() - 1],
-                        self.graphcoords[rightss - self.get_start()]]
+            annotations = []
 
-            mid = (ss1 + ss2) / 2
-            h = -3 * ymin / 4
+            if self.num_sj_tracks>0:
+                for jxn,val in self.intron_cov_lst[c].items():
+                    leftss, rightss = jxn
 
-            leftdens = self.cov_full[int(ss1)]
-            rightdens = self.cov_full[int(ss2)]
+                    ss1, ss2 = [self.graphcoords[leftss - self.get_start() - 1],
+                                self.graphcoords[rightss - self.get_start()]]
 
-            pts = [(ss1, leftdens),
-                   (ss1, leftdens + h),
-                   (ss2, rightdens + h),
-                   (ss2, rightdens)]
+                    mid = (ss1 + ss2) / 2
+                    h = -3 * ymin / 4
 
-            midpt = Locus.cubic_bezier(pts, .5)
+                    leftdens = self.cov_full_lst[c][int(ss1)]
+                    rightdens = self.cov_full_lst[c][int(ss2)]
 
-            if self.settings["number_junctions"]:
-                plt.text(midpt[0], midpt[1], '%s'%(val),
-                         fontsize=self.settings["font_size"], ha='center', va='center', backgroundcolor='w')
+                    pts = [(ss1, leftdens),
+                           (ss1, leftdens + h),
+                           (ss2, rightdens + h),
+                           (ss2, rightdens)]
 
-            pp1 = PathPatch(Path(pts,[Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4]),
-                            ec=color_spines, lw=np.log(val + 1) / np.log(10), fc='none')
+                    midpt = Locus.cubic_bezier(pts, .5)
 
-            ax.add_patch(pp1)
+                    if self.settings["number_junctions"]:
+                        annotations.append(ax.annotate('%s'%(val), xy=(midpt[0], midpt[1]), xytext=(midpt[0], midpt[1]+.3),fontsize=self.settings["font_size"]))
 
-        ax.spines['right'].set_color('none')
-        ax.spines['top'].set_color('none')
-        ax.xaxis.set_ticks_position('bottom')
-        ax.set_xlabel("Genomic coordinates : "+self.get_coords_str(),fontsize=self.settings["font_size"])
-        max_graphcoords = max(self.graphcoords) - 1
-        coords_fontsize = self.settings["font_size"] - (self.settings["font_size"] * 0.2)
-        ax.set_xlim(0, max(self.graphcoords))
-        ax.set_xticks(np.linspace(0, max_graphcoords, self.settings["nxticks"]),
-                      [self.graphToGene[int(x)] for x in \
-                       np.linspace(0, max_graphcoords, self.settings["nxticks"])],
-                      fontsize=coords_fontsize)
+                    pp1 = PathPatch(Path(pts,[Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4]),
+                                    ec=color_spines, lw=np.log(val + 1) / np.log(10), fc='none')
+
+                    ax.add_patch(pp1)
+
+                adjust_text(annotations, autoalign='y', expand_objects=(0.1, 1),
+                            only_move={'points':'', 'text':'y', 'objects':'y'}, force_text=0.75, force_objects=0.1)
+
+            ax.spines['right'].set_color('none')
+            ax.spines['top'].set_color('none')
+            max_graphcoords = max(self.graphcoords) - 1
+            ax.set_xlim(0, max(self.graphcoords))
+
+            if not final_plot:
+                ax.spines['bottom'].set_color('none')
+                ax.set_xticks([])
+                ax.set_xticks([],minor=True)
+            else:
+                ax.xaxis.set_ticks_position('bottom')
+                ax.set_xlabel("Genomic coordinates : "+self.get_coords_str(),fontsize=self.settings["font_size"])
+
+                coords_fontsize = self.settings["font_size"] - (self.settings["font_size"] * 0.2)
+                ax.set_xticks(np.linspace(0, max_graphcoords, self.settings["nxticks"]),
+                              [self.graphToGene[int(x)] for x in \
+                               np.linspace(0, max_graphcoords, self.settings["nxticks"])],
+                              fontsize=coords_fontsize)
 
 
-        ax.set_ylabel("Coverage",fontsize=self.settings["font_size"], ha='left')
-        ax.spines["left"].set_bounds(0, max(self.cov_full))
-        ax.tick_params(axis='y',labelsize=self.settings["font_size"])
-        ax.set_ybound(lower=ax.get_ybound()[0], upper=max(self.cov_full))
-        ax.yaxis.set_ticks_position('left')
+            ax.set_ylabel("Coverage",fontsize=self.settings["font_size"])
+            ax.spines["left"].set_bounds(0, max(self.cov_full_lst[c]))
+            ax.tick_params(axis='y',labelsize=self.settings["font_size"])
+            ax.set_ybound(lower=ax.get_ybound()[0], upper=max(self.cov_full_lst[c]))
+            ax.yaxis.set_ticks_position('left')
 
         exonwidth = .3
         narrows = 50
 
         locus_start = self.get_start()
-        locus_end = self.get_end()
 
+        gs2 = GridSpec(len(self.txs)+self.num_cov_tracks, 1,height_ratios=hrs)
+        gs2.update(hspace=gs2hs)
         for i,tx in enumerate(self.txs):
-            ax2 = plt.subplot2grid((len(self.txs)+2, 1),(2+i,0))
+            ax2 = plt.subplot(gs2[i+self.num_cov_tracks,:])
             ax2.set_title(tx.get_tid(),fontsize=self.settings["font_size"])
 
             for s, e in tx.orf:
@@ -377,7 +420,6 @@ class Locus:
                     ax2.plot(x, y, lw=2, color=color_exon)
 
             ax2.set_xlim(0, max(self.graphcoords))
-            ax2.set_ylim(-0.1, 0.1)
             plt.box(on=False)
             ax2.set_xticks([])
             ax2.set_yticks([])
@@ -387,8 +429,6 @@ class Locus:
 
 
 def sashimi(args):
-    # load mRNA
-
     assert os.path.exists(args.gtf), "GTF does not exist: " + args.gtf
     assert os.path.exists(args.cov), "Coverage file does not exist: " + args.cov
     assert os.path.exists(args.sj), "Splice Junction file does not exist: " + args.sj
@@ -445,10 +485,44 @@ def sashimi(args):
         locus.add_tx(tx)
 
     # read in only values for which the transcriptome has been constructed
-    locus.add_introns(args.sj)
+    is_cov_lst_file = args.cov is not None
+    if args.cov is not None:
+        # check if it's a file listing a set of files with introns
+        with open(args.cov,"r") as inFP:
+            for line in inFP:
+                tmp = line.strip()
+                if not os.path.exists(tmp) and len(tmp)>0:
+                    is_cov_lst_file = False
+                    break
+
+        if is_cov_lst_file:
+            with open(args.cov,"r") as inFP:
+                for line in inFP:
+                    tmp = line.strip()
+                    if len(tmp)>0:
+                        locus.add_coverage(tmp)
+        else:
+            locus.add_coverage(args.cov)
 
     # add coverage
-    locus.add_coverage(args.cov)
+    is_sj_lst_file = True
+    if args.sj is not None:
+        with open(args.sj,"r") as inFP:
+            for line in inFP:
+                tmp = line.strip()
+                if not os.path.exists(tmp) and len(tmp)>0:
+                    is_sj_lst_file = False
+                    break
+
+        if is_sj_lst_file:
+            assert is_cov_lst_file,"can not add splice junction tracks as list without coverage tracks provided as list as well"
+            with open(args.sj,"r") as inFP:
+                for line in inFP:
+                    tmp = line.strip()
+                    if len(tmp)>0:
+                        locus.add_introns(tmp)
+        else:
+            locus.add_introns(args.sj)
 
     locus.plot(args.output)
 
@@ -459,11 +533,11 @@ def main(args):
                         required=True,
                         help="annotation in a GFF/GTF format")
     parser.add_argument("--cov",
-                        required=True,
-                        help="coverage in bedgrap format")
+                        required=False,
+                        help="coverage in bedgraph format or a file containing a list of filenames with coverage in bedgraph for multiple samples. If a list is provided - the files should be in the same order as the splice junctions below (if provided)")
     parser.add_argument("--sj",
-                        required=True,
-                        help="splice junctions in bed format")
+                        required=False,
+                        help="splice junctions in bed format or a file containing a list of filenames with splice junctions in bed format for multiple samples. If a list is provided - the files should be in the same order as the coverage tracks.")
     parser.add_argument("-o",
                         "--output",
                         required=True,
@@ -491,7 +565,7 @@ def main(args):
     parser.add_argument("--fig_height",
                         required=False,
                         type=int,
-                        default=25,
+                        default=10,
                         help="fig_height")
     parser.add_argument("--junction_log_base",
                         required=False,
