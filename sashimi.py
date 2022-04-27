@@ -171,6 +171,12 @@ class Locus:
 
         self.txs.append(tx)
 
+    def set_scaling(self):
+        # get graphcoords
+        if self.graphcoords is None:
+            self.graphcoords, self.graphToGene = self.getScaling(self.settings["intron_scale"], self.settings["exon_scale"],
+                                                                 self.settings["reverse_minus"])
+            
     def get_start(self):
         return self.intervals[0][0]
 
@@ -253,10 +259,7 @@ class Locus:
 
     def add_coverage(self, cov_fname):
         assert os.path.exists(cov_fname),"Coverage track does not exist: "+cov_fname
-        # get graphcoords
-        if self.graphcoords is None:
-            self.graphcoords, self.graphToGene = self.getScaling(self.settings["intron_scale"], self.settings["exon_scale"],
-                                                                 self.settings["reverse_minus"])
+        assert os.path.exists(cov_fname),"Coverage track does not exist: "+cov_fname
 
         # use the graphcoords to perform interval compression below
         self.cov_full_lst.append(list())
@@ -277,7 +280,7 @@ class Locus:
                     continue
 
                 # process coverage
-                for v in range(int(lcs[1]), int(lcs[2]), 1):
+                for v in range(int(lcs[1]), min(self.get_end(),int(lcs[2])), 1):
                     self.cov_full_lst[-1][v - self.get_start()] = int(lcs[3])
 
         # compress the vals
@@ -383,7 +386,7 @@ class Locus:
         gs2.update(hspace=gs2hs)
         for i,tx in enumerate(self.txs):
             ax2 = plt.subplot(gs2[i+self.num_cov_tracks,:])
-            ax2.set_title(tx.get_tid(),fontsize=self.settings["font_size"])
+            ax2.set_xlabel(tx.get_tid(),fontsize=self.settings["font_size"])
 
             for s, e in tx.orf:
                 s = s - locus_start
@@ -430,8 +433,8 @@ class Locus:
 
 def sashimi(args):
     assert os.path.exists(args.gtf), "GTF does not exist: " + args.gtf
-    assert os.path.exists(args.cov), "Coverage file does not exist: " + args.cov
-    assert os.path.exists(args.sj), "Splice Junction file does not exist: " + args.sj
+    # assert os.path.exists(args.cov), "Coverage file does not exist: " + args.cov
+    # assert os.path.exists(args.sj), "Splice Junction file does not exist: " + args.sj
 
     settings = {"intron_scale": args.intron_scale,
                 "exon_scale": args.exon_scale,
@@ -483,6 +486,8 @@ def sashimi(args):
         tx = TX()
         tx.parse_from_gtf(cur_tid_lines)
         locus.add_tx(tx)
+
+    locus.set_scaling()
 
     # read in only values for which the transcriptome has been constructed
     is_cov_lst_file = args.cov is not None
