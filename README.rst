@@ -29,7 +29,7 @@ with their counts across many samples.
 
     Ales Varabyou, Geo Pertea, Christopher Pockrandt, Mihaela Pertea, TieBrush: an efficient method for aggregating and summarizing mapped reads across large datasets, Bioinformatics, 2021;, btab342, https://doi.org/10.1093/bioinformatics/btab342
 
-Sahimi plot is largely based on the implementation from the MISO package. please cite both the TieBrush publication as well as the original MISO paper:
+Sashimi plot is largely based on the implementation from the MISO package. please cite both the TieBrush publication as well as the original MISO paper:
 
     Katz, Yarden, Eric T. Wang, Jacob Silterra, Schraga Schwartz, Bang Wong, Helga Thorvaldsdóttir, James T. Robinson, Jill P. Mesirov, Edoardo M. Airoldi, and Christopher B. Burge. "Quantitative visualization of alternative exon expression from RNA-seq data." Bioinformatics 31, no. 14 (2015): 2400-2402.
 
@@ -178,3 +178,53 @@ as well as the concurrency parameters can be set explicitely.
   -F, --flags           Bits in SAM flag to use in read comparison. Only reads that have specified flags will be merged together (default: 0)
   -t, --threads         Number of threads to use.
   -b, --batch-size      Number of input files to process in a batch on each thread.
+
+Sashimi
+"""""""
+
+Sashimi.py is a small utility script provided to create vectorized visualizzation of a locus, taking full advantage of the files created by TieBrush suite.
+
+Sashimi plot is largely based on the implementation from the MISO package. please cite both the TieBrush publication as well as the original MISO paper:
+
+    Katz, Yarden, Eric T. Wang, Jacob Silterra, Schraga Schwartz, Bang Wong, Helga Thorvaldsdóttir, James T. Robinson, Jill P. Mesirov, Edoardo M. Airoldi, and Christopher B. Burge. "Quantitative visualization of alternative exon expression from RNA-seq data." Bioinformatics 31, no. 14 (2015): 2400-2402.
+
+You must have matplotlib, adjustText and numpy installed to run sashimi.py with python3 which can be installed via
+
+    pip3 install matplotlib adjustText numpy
+
+    sashimi.py [-h] --gtf GTF [--cov COV] [--sj SJ] -o OUTPUT [--intron_scale INTRON_SCALE]
+                  [--exon_scale EXON_SCALE] [--resolution RESOLUTION] [--fig_width FIG_WIDTH]
+                  [--fig_height FIG_HEIGHT] [--junction_log_base JUNCTION_LOG_BASE]
+                  [--font_size FONT_SIZE] [--nyticks NYTICKS] [--nxticks NXTICKS] [--ymax YMAX]
+                  [--logged] [--number_junctions] [--reverse_minus] [--show_ylabel] [--show_xlabel]
+                  [--sans_serif] [--bar_color BAR_COLOR]
+
+    options:
+      -h, --help            show this help message and exit
+      --gtf GTF             annotation in a GFF/GTF format
+      --cov COV             coverage in bedgraph format or a file containing a list of filenames with
+                            coverage in bedgraph for multiple samples. If a list is provided - the files
+                            should be in the same order as the splice junctions below (if provided)
+      --sj SJ               splice junctions in bed format or a file containing a list of filenames with
+                            splice junctions in bed format for multiple samples. If a list is provided -
+                            the files should be in the same order as the coverage tracks.
+      -o OUTPUT, --output OUTPUT    output basename
+      --intron_scale INTRON_SCALE   intron_scale
+      --exon_scale EXON_SCALE   exon_scale
+      --resolution RESOLUTION   resolution
+      --fig_width FIG_WIDTH fig_width
+      --fig_height FIG_HEIGHT   fig_height
+      --junction_log_base JUNCTION_LOG_BASE junction_log_base
+      --font_size FONT_SIZE fig_height
+      --nyticks NYTICKS     nyticks
+      --nxticks NXTICKS     nxticks
+      --ymax YMAX           ymax
+      --logged              logged - False by default
+      --number_junctions    number_junctions - True by default
+      --reverse_minus       reverse_minus - False by default
+      --show_ylabel         show_ylabel - True by default
+      --show_xlabel         show_xlabel - True by default
+      --sans_serif          sans_serif - False by default
+      --bar_color BAR_COLOR Color specified in any matplotlib-compatable format
+
+
