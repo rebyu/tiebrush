@@ -290,9 +290,9 @@ class Locus:
     def get_coords_str(self):
         return self.seqid + self.strand + ":" + str(self.get_start()) + "-" + str(self.get_end())
 
-    def plot(self,out_fname):
+    def plot(self,out_fname,title=None):
         assert self.num_sj_tracks==self.num_cov_tracks or self.num_sj_tracks==0,"incompatible number of splice junciton and coverage tracks - the numebrs should either be the same or no splice junction tracks provided at all"
-
+        
         color_dens = "#ffb703"
         color_spines = "#fb8500"
         color_exon = "#023047"
@@ -414,7 +414,7 @@ class Locus:
             spread = .2 * max(self.graphcoords) / narrows
             for i in range(narrows):
                 loc = float(i) * max(self.graphcoords) / narrows
-                if tx.get_strand == '+' or self.settings["reverse_minus"]:
+                if tx.get_strand() == '+' or self.settings["reverse_minus"]:
                     x = [loc - spread, loc, loc - spread]
                 else:
                     x = [loc + spread, loc, loc + spread]
@@ -426,6 +426,10 @@ class Locus:
             plt.box(on=False)
             ax2.set_xticks([])
             ax2.set_yticks([])
+
+
+        if not title is None:
+            plt.suptitle(title,wrap=True)
 
         plt.subplots_adjust(hspace=.5, wspace=.7)
         plt.savefig(out_fname)
@@ -529,7 +533,10 @@ def sashimi(args):
         else:
             locus.add_introns(args.sj)
 
-    locus.plot(args.output)
+    title = None
+    if not args.title is None:
+        title = " ".join(args.title)
+    locus.plot(args.output,title)
 
 
 def main(args):
@@ -626,6 +633,11 @@ def main(args):
                         type=str,
                         default="k",
                         help="bar_color")
+    parser.add_argument("--title",
+                        required=False,
+                        nargs='+',
+                        default=None,
+                        help="Title of the figure")
 
     parser.set_defaults(func=sashimi)
     args = parser.parse_args()
