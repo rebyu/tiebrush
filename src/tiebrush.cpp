@@ -1,4 +1,9 @@
 #include <vector>
+#include <string>
+#include <set>
+#include <map>
+#include <iterator>
+#include <algorithm>
 #include <cstring>
 #include <stdlib.h>
 #include <iostream>
@@ -21,7 +26,7 @@ const char* USAGE = "TieBrush v" VERSION "\n"
                               "count (how many times the same alignment is seen across all input data) and "
                               "\"sample count\" (how many samples show that same alignment).\n"
                               "==================\n"
-                              "\n usage: tiebrush  [-h] -o OUTPUT [-L|-P|-E] [-S] [-M] [-N max_NH_value] "
+                              "\n usage: tiebrush  [-h] -o OUTPUT [-C] [-L|-P|-E] [-S] [-M] [-N max_NH_value] "
                               "[-Q min_mapping_quality] [-F FLAGS] ...\n"
                               "\n"
                               " Input arguments:\n"
@@ -35,6 +40,7 @@ const char* USAGE = "TieBrush v" VERSION "\n"
                               " Optional arguments:\n"
                               "  -h,--help\t\tShow this help message and exit\n"
                               "  --version\t\tShow the program version and exit\n"
+                              "  -C, --sample-counts\tGenerate accurate sample counts\n"
                               "  -L,--full\t\tIf enabled, only reads with the same CIGAR\n"
                               "           \t\tand MD strings will be grouped and collapsed.\n"
                               "           \t\tBy default, TieBrush will consider the CIGAR\n"
@@ -90,10 +96,18 @@ TMrgStrategy mrgStrategy=tMrgStratCIGAR;
 TInputFiles inRecords;
 
 GStr outfname;
+GStr sfname;
 GSamWriter* outfile=NULL;
+FILE* soutf;
+sam_hdr_t* hdr;
+bool track_sample_counts;
+struct SCounts;
+std::vector<std::map<std::string,std::vector<SCounts*>>> tb_counts;
 
 uint64_t inCounter=0;
 uint64_t outCounter=0;
+int fidx=-1;
+bool from_tb=0;
 
 bool verbose=false;
 
@@ -443,7 +457,177 @@ class SPData { // Same Point data
     }
 };
 
-void processOptions(int argc, char* argv[]);
+struct SCounts {
+	int tid;
+	std::string chr_name;
+	int start;
+	int end;
+	int scount = 0;
+	bool from_tb = false;
+	std::set<int> samp_ids;
+	SCounts(){};
+	SCounts(bool from_tb):from_tb(from_tb) {};
+	SCounts(int tid, int start):tid(tid), start(start) {};
+	SCounts(int tid, int start, int end):tid(tid), start(start), end(end) {};
+	SCounts(int tid, int start, int end, int scount):tid(tid), start(start), end(end), scount(scount) {};
+	SCounts(std::string chr_name, int start, int end, int scount):chr_name(chr_name), start(start), end(end), scount(scount) {};
+	SCounts(int tid, int start, int end, GBitVec* samples):tid(tid), start(start), end(end) {
+		int i = samples->find_first();
+		while (i!= -1) {
+			samp_ids.insert(i);
+			i = samples->find_next(i);
+		}
+	};
+	SCounts(int tid, int start, std::set<int> scs):tid(tid), start(start) {
+		for (int samp : scs)
+			samp_ids.insert(samp);
+	};
+	SCounts(int tid, int start, int end, std::set<int> scs):tid(tid), start(start), end(end) {
+		for (int samp : scs)
+			samp_ids.insert(samp);
+	};
+};
+
+class SCData {
+	public:
+	std::vector<SCounts*> sclst;
+	void clear() {
+		for (auto& r : sclst)
+			delete r;
+		sclst.clear();
+	}
+
+	// std::vector<SCounts*> collapse() {
+	void collapse() {
+		if (sclst.size() == 0) return;
+		std::vector<SCounts*> collapsed;
+		std::vector<std::set<int>> sample_counts;
+
+		int bstart = sclst.front()->start, bend = sclst.back()->end;
+		int curtid = sclst.front()->tid;
+		for (auto& r : sclst) {
+			if (r->start < bstart)	bstart = r->start;
+			if (r->end > bend)	bend = r->end;
+		}
+
+		for (int i = bstart; i <= bend+1; i++) {
+			std::set<int> scs;
+			sample_counts.push_back(scs);  // initialize int sets for each location
+		}
+
+		for (int i = 0; i < sclst.size(); i++) {
+			SCounts *rec = sclst[i];
+			for (int j = rec->start; j <= rec->end; j++)
+				for (int samp : rec->samp_ids)  // insert sample ids at each location
+					sample_counts[j-bstart].insert(samp);
+		}
+		int cur_sc = -1, rstart = bstart;	
+		for (int i = 0; i < sample_counts.size(); i++) {
+			int sc = sample_counts[i].size();
+			if (sc != cur_sc) {
+				int newend = i+bstart-1;
+				if (cur_sc > 0)	collapsed.push_back(new SCounts(curtid, rstart, newend, sample_counts[i-1]));
+				rstart = i+bstart-1;
+				cur_sc = sc;
+			}
+		}
+		// if (rstart < bend)
+		// 	collapsed.push_back(new SCounts(curtid, rstart, bend, sample_counts.back()));
+		
+		this->clear();
+		sclst = collapsed;
+	}
+
+	void mergeCounts(int tid) {
+		std::string chr = hdr->target_name[tid];
+		std::vector<SCounts*> collapsed;
+		
+		int bstart = -1, bend = -1;
+		if (sclst.size() > 0) {
+			bstart = sclst.front()->start;
+			bend = sclst.back()->end;
+			for (auto& r : sclst) {
+				if (r->start < bstart)	bstart = r->start;
+				if (r->end > bend)	bend = r->end;
+			}
+		}
+		for (auto& tbc_map : tb_counts) {
+			if (tbc_map.count(chr) <= 0) continue;
+			std::vector<SCounts*> tbc = tbc_map[chr];
+			if (bstart == -1 && bend == -1) {
+				bstart = tbc.front()->start;
+				bend = tbc.back()->end;
+			}
+			for (auto& r : tbc) {
+				if (r->start < bstart)	bstart = r->start;
+				if (r->end > bend)	bend = r->end;
+			}
+		}
+
+		std::vector<int> n_samples (bend - bstart + 1, 0);
+
+		for (int i = 0; i < sclst.size(); i++) {
+            SCounts rec = *(sclst[i]);
+			for (int j = rec.start - bstart; j < rec.end - bstart; j++)
+				n_samples[j] += rec.samp_ids.size();
+        }
+
+		for (auto& tbc_map : tb_counts) {
+			std::vector<SCounts*> tbc = tbc_map[chr];
+			for (auto& sc : tbc)
+				for (int j = sc->start - bstart; j < sc->end - bstart; j++)
+					n_samples[j] += sc->scount;
+		}
+
+		int cur_sc = -1, rstart = bstart;	
+		for (int i = 0; i < n_samples.size(); i++) {
+			int sc = n_samples[i];
+			if (sc != cur_sc) {
+				int newend = i+bstart-1;
+				if (cur_sc > 0)	collapsed.push_back(new SCounts(tid, rstart, newend, cur_sc));
+				rstart = i+bstart-1;
+				cur_sc = sc;
+			}
+		}
+
+		this->clear();
+		sclst = collapsed;
+	}
+
+	void add(GList<SPData>& spdlst) {
+		if (spdlst.Count()==0) return;
+		for (int i = 0; i < spdlst.Count(); ++i) {
+			SPData& spd = *(spdlst.Get(i));
+			GSamRecord* r = spd.r;
+			GVec<GSeg> exons = r->exons;
+			int tid = r->get_b()->core.tid;
+			for (int i = 0; i < exons.Count(); i++) {
+				GSeg exon = exons.Get(i);
+				SCounts* rec = new SCounts(tid, exon.start, exon.end, spd.samples);
+				sclst.push_back(rec);
+			}
+		}
+	}
+
+    void flush(int outtid) {
+        if (sclst.size() == 0 && outtid < 1)  return;
+        collapse();  // collapse sclst to have accumulated sample counts
+		mergeCounts(outtid);  // merge existing sclst counts with tiebrush output counts
+        for (int i = 0; i < sclst.size(); i++) {
+            SCounts rec = *(sclst[i]);
+            int tid = rec.tid;
+            if (tid == outtid){
+                fprintf(soutf, "%s\t%d\t%d\t%lu\n", hdr->target_name[tid], rec.start, rec.end, rec.scount);
+            }
+        }
+        for (int i = 0; i < sclst.size(); i++)
+            delete sclst[i];
+        sclst.clear();
+    }
+};
+
+
+int processOptions(int argc, char* argv[]);
 
 void addPData(TInputRecord& irec, GList<SPData>& spdlst) {
   //add and collapse if match found
@@ -530,39 +714,57 @@ bool passes_options(GSamRecord* brec){
 
 int main(int argc, char *argv[])  {
 	inRecords.setup(VERSION, argc, argv);
-	processOptions(argc, argv);
-	int numSamples=inRecords.start();
-	outfile=new GSamWriter(outfname, inRecords.header(), GSamFile_BAM);
+	int numSamples = processOptions(argc, argv);
+	hdr = inRecords.header();
+
+	
+	outfile=new GSamWriter(outfname, hdr, GSamFile_BAM);
 	rspacing.init(numSamples);
 	TInputRecord* irec=NULL;
 	GSamRecord* brec=NULL;
 
 	GList<SPData> spdata(true, true, true); //list of Same Position data, with all possibly merged records
+	SCData* scd = new SCData();
+
 	bool newChr=false;
 	int prev_pos=-1;
 	int prev_tid=-1;
+	int pos, tid;
 	while ((irec=inRecords.next())!=NULL) {
-		 brec=irec->brec;
-         if(!passes_options(brec)) continue;
-		 inCounter++;
-		 int tid=brec->refId();
-		 int pos=brec->start; //1-based
+		brec=irec->brec;
+		if(!passes_options(brec)) continue;
+		inCounter++;
+		int tid=brec->refId();
+		int pos=brec->start; //1-based
 
-		 if (tid!=prev_tid) {
-			 if (prev_tid!=-1) newChr=true;
-			 prev_tid=tid;
-			 prev_pos=-1;
-		 }
-		 if (pos!=prev_pos) { //new position
-			 flushPData(spdata); //also adds read data to rspacing
-			 prev_pos=pos;
+		from_tb = irec->tbMerged; // is this from a tb file
+		fidx = irec->fidx;
+
+		if (pos!=prev_pos) {  // new position
+			if (track_sample_counts && !from_tb)	scd->add(spdata);
+		 	flushPData(spdata); // also adds read data to rspacing
+			prev_pos=pos;
+		}
+            
+		if (tid!=prev_tid) {  // new chromosome
+			if (prev_tid!=-1) newChr=true;
+			if (track_sample_counts) { scd->flush(prev_tid); }
+			prev_tid=tid;
+			prev_pos=-1;
 		 }
 		 if (newChr) {
-			 rspacing.reset();
-			 newChr=false;
+			rspacing.reset();
+			newChr=false;
 		 }
 		 addPData(*irec, spdata);
 	}
+
+	if (track_sample_counts) {
+		if (track_sample_counts && !from_tb) scd->add(spdata);
+		scd->flush(prev_tid);
+		fclose(soutf);
+	}
+
     flushPData(spdata);
 	inRecords.stop();
 
@@ -575,8 +777,8 @@ int main(int argc, char *argv[])  {
 }
 // <------------------ main() end -----
 
-void processOptions(int argc, char* argv[]) {
-    GArgs args(argc, argv, "help;debug;verbose;version;full;clip;exon;keep-supp;keep-unmap;SMLPEDVho:N:Q:F:");
+int processOptions(int argc, char* argv[]) {
+    GArgs args(argc, argv, "help;debug;verbose;version;full;clip;exon;keep-supp;keep-unmap;sample-counts;CSMLPEDVho:N:Q:F:");
     args.printError(USAGE, true);
 
     if (args.getOpt('h') || args.getOpt("help")) {
@@ -613,6 +815,9 @@ void processOptions(int argc, char* argv[]) {
     if (!flag_str.is_empty()) {
         options.flags=flag_str.asInt();
     }
+	
+	track_sample_counts = (args.getOpt("sample-counts")!=NULL || args.getOpt("C")!=NULL);
+
     options.keep_supplementary = (args.getOpt("keep-supp")!=NULL || args.getOpt("S")!=NULL);
     options.keep_unmapped = (args.getOpt("keep-unmap")!=NULL || args.getOpt("M")!=NULL);
 
@@ -638,4 +843,38 @@ void processOptions(int argc, char* argv[]) {
         std::string absolute_ifn = get_full_path(ifn);
         inRecords.addFile(absolute_ifn.c_str());
     }
+
+	int numSamples = inRecords.start(track_sample_counts);  // start(...) in tmerge.cpp
+	for(int i = 0; i < inRecords.count(); i++) {
+		TInputRecord* r = inRecords.recs.Get(i);
+		if (r->tbMerged && track_sample_counts) {
+			std::map<int,std::vector<SCounts*>> tbsc; // tiebrush sample counts
+			std::vector<SCounts*> counts;
+			std::map<std::string,std::vector<SCounts*>> tbf_counts;  // counts by chr_name for file
+
+			std::string ltid;
+			std::string prev_tid = "chr0";
+			int lstart, lend, lcount;
+			std::ifstream f;
+			f.open(r->tb_sf);
+			getline(f, ltid);  // pass through header
+			while (f >> ltid >> lstart >> lend >> lcount) {
+				if (ltid != prev_tid)
+					tbf_counts.insert(std::pair<std::string, std::vector<SCounts*>>(prev_tid, std::vector<SCounts*>()));
+				tbf_counts[ltid].push_back(new SCounts(ltid, lstart, lend, lcount));
+			}
+			tbf_counts[ltid].push_back(new SCounts(ltid, lstart, lend, lcount));
+			tb_counts.push_back(tbf_counts);
+			f.close();
+		}
+	}
+
+    if (track_sample_counts) {
+		sfname=GStr(outfname).append(".sample_counts.bedgraph");
+		soutf = fopen(sfname, "w");
+		if (soutf == NULL) { printf("Cannot open output!"); exit(1); }
+		fprintf(soutf, "track type=bedgraph name=\"Sample Count Heatmap\" description=\"Sample Count Heatmap\" visibility=full graphType=\"heatmap\" color=200,100,0 altColor=0,100,200\n");
+	}
+
+	return numSamples;
 }
