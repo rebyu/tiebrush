@@ -90,7 +90,7 @@ The goal is to generate this composite BAM file which multiplexes read alignment
 samples, painting a comprehensive "background" picture of read alignments with their counts across
 many samples.
 
-  tiebrush  [-h] -o OUTPUT [-L|-P|-E] [-S] [-M] [-N max_NH_value] [-Q min_mapping_quality] [-F FLAGS] ...
+  tiebrush  [-h] -o OUTPUT [-C] [-L|-P|-E] [-S] [-M] [-N max_NH_value] [-Q min_mapping_quality] [-F FLAGS] ...
 
   Input arguments:
 
@@ -104,6 +104,7 @@ many samples.
 
   -h, --help        Show this help message and exit
   --version         Show the program version end exit
+  -C, --sample-counts If enabled, will generate exact sample counts. Sample counts will be outputted to an auxiliary file named [OUTPUT].sample_counts.bedgraph
   -L, --full        If enabled, only reads with the same CIGAR and MD strings will be grouped and collapsed. By default, TieBrush will consider the CIGAR string only when grouping reads
   -P, --clip        If enabled, reads will be grouped by clipped CIGAR string. In this mode 5S10M5S and 3S10M3S CIGAR strings will be grouped if the coordinates of the matching substring (10M) are the same between reads
   -E, --exon        If enabled, reads will be grouped if their exon boundaries are the same. This option discards any structural variants contained in mapped substrings of the read and only considers start and end coordinates of each non-splicing segment of the CIGAR string
@@ -113,7 +114,8 @@ many samples.
   -Q                Minimum mapping quality to include.
   -F                Bits in SAM flag to use in read comparison. Only reads that have specified flags will be merged together (default: 0)
 
-Note that options -L, -P and -E are mutually exclusive. 
+Note that options -L, -P and -E are mutually exclusive.
+Also, note that running option -C on TieBrush outputs requires the previous output to be generated using the -C option as well.
 
 
 SAM tags implemented
