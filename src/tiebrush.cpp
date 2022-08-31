@@ -40,7 +40,9 @@ const char* USAGE = "TieBrush v" VERSION "\n"
                               " Optional arguments:\n"
                               "  -h,--help\t\tShow this help message and exit\n"
                               "  --version\t\tShow the program version and exit\n"
-                              "  -C, --sample-counts\tGenerate accurate sample counts\n"
+                              "  -C, --sample-counts\tIf enabled, will generate exact sample\n"
+							  "			  \t\tcounts. Sample counts will be outputted to an\n"
+							  "			  \t\tauxiliary file named [OUTPUT].sample_counts.bedgraph\n"
                               "  -L,--full\t\tIf enabled, only reads with the same CIGAR\n"
                               "           \t\tand MD strings will be grouped and collapsed.\n"
                               "           \t\tBy default, TieBrush will consider the CIGAR\n"
@@ -497,7 +499,6 @@ class SCData {
 		sclst.clear();
 	}
 
-	// std::vector<SCounts*> collapse() {
 	void collapse() {
 		if (sclst.size() == 0) return;
 		std::vector<SCounts*> collapsed;
