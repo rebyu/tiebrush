@@ -2,10 +2,12 @@
 #define TIEBRUSH_TMERGE_H_
 
 #include <map>
+#include <vector>
+#include <iostream>
+#include <fstream>
 #include <gclib/GStr.h>
 #include <gclib/GVec.hh>
 #include <gclib/GList.hh>
-//#include "rlink.h"
 #include "GSam.h"
 #include <htslib/htslib/khash.h>
 
@@ -24,6 +26,8 @@ struct TInputRecord {
 	GSamRecord* brec;
 	int fidx; //file index in files and readers
 	bool tbMerged; //is it from a TieBrush generated file?
+	GStr ifname;  //input file name
+	std::string tb_sf;  //sample counts file name
 	bool operator<(TInputRecord& o) {
 		 //decreasing location sort
 		 GSamRecord& r1=*brec;
@@ -58,8 +62,21 @@ struct TInputRecord {
     void disown() {
     	brec=NULL;
     }
-	TInputRecord(GSamRecord* b=NULL, int i=0, bool tb_merged=false):brec(b),
-			fidx(i),tbMerged(tb_merged) {}
+	TInputRecord(GSamRecord* b=NULL, int i=0, bool tb_merged=false, GStr ifname="", bool sample_counts=false) {
+		brec = b;
+		fidx = i;
+		tbMerged = tb_merged;
+		if (tbMerged && sample_counts) {
+			GStr tbsfname = ifname.chars() + GStr(".sample_counts.bedgraph");
+			tb_sf = tbsfname.chars();
+			std::ifstream temp;
+			temp.open(tb_sf);
+			if (!temp.is_open()) {
+				fprintf(stderr, "\nMissing sample count file: %s (for %s)\n\nPlease run tiebrush with --sample-counts tag.\n\n", tbsfname.chars(), ifname.chars());
+				exit(1);
+			}
+		}
+	}
 	~TInputRecord() {
 		delete brec;
 	}
@@ -74,6 +91,7 @@ struct TInputFiles {
 	GStr pg_args;
  public:
 	GPVec<TSamReader> freaders;
+	std::vector<GStr> fnames;  //vector of file names read in
 	void addFile(const char* fn);
 	bool addSam(GSamReader* r, int fidx); //update mHdr data
 	GList<TInputRecord> recs; //next record for each
@@ -98,7 +116,7 @@ struct TInputFiles {
 	}
 
 	int count() { return freaders.Count(); }
-	int start(); //open all files, load 1 record from each
+	int start(bool track_sample_counts); //open all files, load 1 record from each
 	TInputRecord* next();
 	void stop(); //
 

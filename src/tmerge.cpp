@@ -52,6 +52,7 @@ void TInputFiles::addFile(const char* fn) {
     }
 
     freaders.Add(new TSamReader(fn));
+    fnames.push_back(sfn);
 }
 bool TInputFiles::addSam(GSamReader* r, int fidx) {
     //requirement: all files must have the same number of SQ entries in the same order!
@@ -302,7 +303,7 @@ void TInputFiles::delete_all_hdr_with_tag(sam_hdr_t *hdr,std::string tag1, std::
 }
 
 // todo: merge header PG tags
-int TInputFiles::start(){
+int TInputFiles::start(bool track_sample_counts=false){
     if (this->freaders.Count()==1) {
         //special case, if it's only one file it might be a list of file paths
         GStr& fname= this->freaders.First()->fname;
@@ -341,7 +342,7 @@ int TInputFiles::start(){
 
         GSamRecord* brec=samrd->next();
         if (brec)
-            recs.Add(new TInputRecord(brec, i, tb_merged));
+            recs.Add(new TInputRecord(brec, i, tb_merged, fnames.at(i), track_sample_counts));
     }
     return freaders.Count();
 }
@@ -354,7 +355,7 @@ TInputRecord* TInputFiles::next() {
         crec=recs.Pop();//lowest coordinate
         GSamRecord* rnext=freaders[crec->fidx]->samreader->next();
         if (rnext)
-            recs.Add(new TInputRecord(rnext,crec->fidx, crec->tbMerged));
+            recs.Add(new TInputRecord(rnext,crec->fidx, crec->tbMerged, fnames.at(crec->fidx)));
         //return crec->brec;
         return crec;
     }
