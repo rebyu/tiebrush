@@ -26,6 +26,8 @@ def build_base_cmd(args):
         tb_cmd.append("-M")
     if args.keep_supp:
         tb_cmd.append("-S")
+    if args.sample_counts:
+        tb_cmd.append("--sample-counts")
     if args.max_nh:
         tb_cmd.append("-N")
         tb_cmd.append(str(args.max_nh))
@@ -169,6 +171,12 @@ def tiebrush(argv):
                         help="If enabled, supplementary alignments will be included in the collapsed groups of reads. "
                              "By default, TieBrush removes any mappings not listed as primary (0x100). "
                              "Note, that if enabled, each supplementary mapping will count as a separate read.")
+    parser.add_argument('-C',
+                        '--sample-counts',
+                        required=False,
+                        action='store_true',
+                        help="If enabled, will track exact sample counts. "
+                             "By default, TieBrush does not track exact sample counts (even when running TieCov). ")
     parser.add_argument('-M',
                         '--keep-unmap',
                         required=False,
